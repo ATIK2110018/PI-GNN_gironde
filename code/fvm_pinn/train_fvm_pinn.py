@@ -277,6 +277,49 @@ def main():
     plt.savefig('/kaggle/working/outputs/after_training_timeseries.png')
     plt.close()
     
+    # ==========================================
+    # POST-TRAINING SPATIAL FIELD EVALUATION
+    # ==========================================
+    print("Generating full spatial field comparison for the final time step...")
+    final_t_idx = len(times_seconds) - 1
+    final_t_val = times_seconds[-1]
+    
+    with torch.no_grad():
+        norm_t_final = trainer.get_normalized_t(torch.tensor([final_t_val], dtype=torch.float32, device=device))
+        h_pred_final, _, _ = trainer.pinn(norm_t_final, trainer.norm_coords)
+        wl_pred_final = h_pred_final.cpu().numpy().flatten() + cell_z_np
+        
+    true_wl_final = true_wl_matrix[final_t_idx]
+    spatial_error = np.abs(wl_pred_final - true_wl_final)
+    
+    plt.figure(figsize=(18, 6))
+    
+    # True Field
+    plt.subplot(1, 3, 1)
+    sc1 = plt.scatter(cell_coords_m[:, 0], cell_coords_m[:, 1], c=true_wl_final, cmap='viridis', s=1)
+    plt.colorbar(sc1, label='Water Level (m)')
+    plt.title("True Water Level (Final Step)")
+    plt.xlabel("X (m)")
+    plt.ylabel("Y (m)")
+    
+    # Predicted Field
+    plt.subplot(1, 3, 2)
+    sc2 = plt.scatter(cell_coords_m[:, 0], cell_coords_m[:, 1], c=wl_pred_final, cmap='viridis', s=1)
+    plt.colorbar(sc2, label='Water Level (m)')
+    plt.title("FVM-PINN Predicted Water Level")
+    plt.xlabel("X (m)")
+    
+    # Error Field
+    plt.subplot(1, 3, 3)
+    sc3 = plt.scatter(cell_coords_m[:, 0], cell_coords_m[:, 1], c=spatial_error, cmap='Reds', s=1, vmax=np.percentile(spatial_error, 95))
+    plt.colorbar(sc3, label='Absolute Error (m)')
+    plt.title("Spatial Error Map (95th percentile capped)")
+    plt.xlabel("X (m)")
+    
+    plt.tight_layout()
+    plt.savefig('/kaggle/working/outputs/spatial_field_comparison.png')
+    plt.close()
+    
     print("Training and Evaluation Complete! All plots saved to /kaggle/working/outputs")
 
 if __name__ == "__main__":
