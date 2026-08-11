@@ -50,15 +50,15 @@ def main():
     ds.close()
     
     # ==========================================
-    # FAST DEBUG MODE TOGGLE (Set to True for a 15-minute test run)
+    # FAST DEBUG MODE TOGGLE (Set to True for a 2-minute test run)
     # ==========================================
     FAST_DEBUG_MODE = True
     
     if FAST_DEBUG_MODE:
-        print("\n!!! FAST DEBUG MODE ENABLED !!!")
-        print("Slicing data to the first 1000 steps (approx 16 hours) to finish in <15 minutes.")
-        times_seconds = times_seconds[:1000]
-        true_wl_matrix = true_wl_matrix[:1000, :]
+        print("\n!!! ULTRA-FAST DEBUG MODE ENABLED !!!")
+        print("Slicing data to 600 steps (10 hours) to finish in < 2 minutes.")
+        times_seconds = times_seconds[:600]
+        true_wl_matrix = true_wl_matrix[:600, :]
     
     x_coords_m = cell_coords[:, 0] * 78700.0
     y_coords_m = cell_coords[:, 1] * 111000.0
@@ -167,7 +167,7 @@ def main():
     # SET EPOCHS
     # =========================================================================
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
-        num_epochs = 3
+        num_epochs = 2
     else:
         num_epochs = 5
         
