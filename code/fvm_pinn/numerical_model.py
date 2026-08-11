@@ -79,8 +79,17 @@ class GPUHydrodynamicModel:
         # but standard clamp works fine since PyTorch defines its subgradient.
         h_next = torch.clamp(h_next, min=0.005)
         
-        hu_next = h*u - dt * div_mom_x
-        hv_next = h*v - dt * div_mom_y
+        # Hydrodynamic Source Terms (Bottom Friction)
+        # Without friction, the estuary acts like a frictionless superfluid.
+        # Manning's friction term for momentum: tau = -g * n^2 * u * |V| / h^(1/3)
+        velocity_mag = torch.sqrt(u**2 + v**2 + 1e-6)
+        friction_coeff = self.g * (self.manning_n ** 2) / (h**(1/3) + 1e-6)
+        
+        S_fx = -friction_coeff * u * velocity_mag
+        S_fy = -friction_coeff * v * velocity_mag
+        
+        hu_next = h*u - dt * div_mom_x + dt * S_fx
+        hv_next = h*v - dt * div_mom_y + dt * S_fy
         
         hu_next[dry_mask] = 0.0
         hv_next[dry_mask] = 0.0
