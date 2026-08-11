@@ -8,11 +8,13 @@ class FourierFeatures(nn.Module):
     Random Fourier Feature Mapping (Positional Encoding)
     Shatters the Spectral Bias so the network can learn high-frequency tidal waves.
     """
-    def __init__(self, in_features=3, out_features=128, sigma=30.0):
+    def __init__(self, in_features=3, out_features=128, sigma_t=30.0, sigma_s=1.0):
         super().__init__()
         self.out_features = out_features
-        # Fixed random matrix for projection
-        self.B = nn.Parameter(torch.randn(in_features, out_features // 2) * sigma, requires_grad=False)
+        # Create separate random matrices for Time and Space
+        B_t = torch.randn(1, out_features // 2) * sigma_t
+        B_s = torch.randn(2, out_features // 2) * sigma_s
+        self.B = nn.Parameter(torch.cat([B_t, B_s], dim=0), requires_grad=False)
         
     def forward(self, x):
         x_proj = 2.0 * np.pi * x @ self.B
@@ -26,10 +28,11 @@ class HydroPINN(nn.Module):
     def __init__(self):
         super(HydroPINN, self).__init__()
         
-        # CRITICAL FIX: The tidal wave has ~22 cycles over the normalized t=[0, 1].
-        # If sigma=5.0, the network suffers from spectral bias and acts as a low-pass filter (flatlining).
-        # We MUST set sigma >= 30.0 so the Fourier features can represent high-frequency sine waves.
-        self.fourier = FourierFeatures(in_features=3, out_features=128, sigma=30.0)
+        # CRITICAL FIX: Separate Temporal and Spatial Sigmas!
+        # Time needs high frequency (sigma=30) to capture 22 tidal cycles.
+        # Space needs LOW frequency (sigma=1.0) so the waves are smooth and broad across the estuary.
+        # If space has high frequency, the network creates "spatial puddles" and ignores wave propagation!
+        self.fourier = FourierFeatures(in_features=3, out_features=128, sigma_t=30.0, sigma_s=1.0)
         
         # Upgrade Architecture to handle complex FVM fluid dynamics (6 layers, 512 width)
         # We switch to SiLU (Swish) activation which has smoother 2nd derivatives and performs much better in PINNs
