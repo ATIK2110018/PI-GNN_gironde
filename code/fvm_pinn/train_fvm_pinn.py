@@ -180,6 +180,8 @@ def main():
     
     print(f"Starting Randomized Spacetime Training ({num_epochs} Epochs over {total_t_steps} time steps)...")
     
+    best_loss = float('inf')
+    
     for epoch in range(1, num_epochs + 1):
         print(f"\n--- Starting Epoch {epoch}/{num_epochs} ---")
         
@@ -245,9 +247,15 @@ def main():
                 print(f"Epoch {epoch} | Step {step+1}/{current_steps} (Random Hour: {t_hr:.1f}) | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg Phys: {avg_phys:.4f}")
         # Decay learning rate at the end of the epoch
         trainer.scheduler.step()
+        
+        # Save Best Model Checkpoint
+        if avg_int < best_loss:
+            best_loss = avg_int
+            torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model_best.pth')
+            print(f"  -> Saved new best model checkpoint! (Data Loss: {best_loss:.4f})")
             
-    # Save the trained model
-    torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model.pth')
+    # Save the final model state (even if exploded)
+    torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model_final.pth')
     
     # Plot Loss Curve
     plt.figure(figsize=(10, 5))
