@@ -88,6 +88,8 @@ class FVMPINNTrainer:
             self.pinn = nn.DataParallel(self.pinn)
             
         self.optimizer = torch.optim.Adam(self.pinn.parameters(), lr=1e-3, weight_decay=1e-5)
+        # Exponential decay: Reduce LR by 20% every epoch to prevent explosion at high physics weights
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.8)
         
     def get_normalized_t(self, t):
         return (t - self.t_min) / (self.t_max - self.t_min)

@@ -246,7 +246,8 @@ def main():
                 
                 t_hr = t_train_array[t_idx] / 3600.0
                 print(f"Epoch {epoch} | Step {step+1}/{current_steps} (Random Hour: {t_hr:.1f}) | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg Phys: {avg_phys:.4f}")
-            
+        # Decay learning rate at the end of the epoch
+        trainer.scheduler.step()
             
     # Save the trained model
     torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model.pth')
