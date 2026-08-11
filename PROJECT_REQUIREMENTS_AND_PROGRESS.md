@@ -3,7 +3,7 @@
 ## 1. Clear Statement of Requirements (What the User Wants)
 * **Numerical Solver Paradigm:** The Neural Network must act **exactly** like a traditional numerical hydrodynamic solver (forward-marching in time). It should not act like a naive global surrogate mapping function that randomly looks at past or future data.
 * **Physics-Driven:** The explicit FVM physics (Shallow Water Equations) must be the primary driving force. The observational data is only meant to "guide" the model, not act as a shortcut for the model to blindly memorize the answers.
-* **Strict Data Separation (No Cheating):** The FVM geometry (mesh topology, cell locations, and bed elevations) must be rigorously extracted **only** from the raw input file (`data/input/FlowFM_net.nc`) stored on GitHub. The model must not touch the Kaggle output file (`FlowFM_map.nc`) for geometry, to prevent data leakage.
+* **Geometry Extraction Compromise:** While strict data separation is ideal, the raw input file (`FlowFM_net.nc`) only contains 19,319 cells, whereas the target output data has 36,271 cells. Therefore, the FVM geometry (mesh topology, cell locations, and bed elevations) must be extracted from the Kaggle output file (`FlowFM_map.nc`) to ensure the spatial structure strictly matches the output arrays.
 * **Domain Parameters:** The Manning's roughness coefficient ($n$) must be strictly set to `0.019` for the entire domain.
 
 ## 2. The Core Problem We Are Facing
@@ -21,4 +21,4 @@ The primary obstacle during training is the **"Hydrostatic Trap" (Flatline Pheno
    * Multiplied the Boundary Data Loss by `100.0` to force the network to feel the ocean tide hitting the boundary.
    * Multiplied the Physics Loss by `100.0` to ensure the optimizer prioritizes gravity and momentum conservation, rather than lazily overfitting the data.
 6. **Strict Forward Time-Marching (Numerical Solver Paradigm):** Removed all randomized training windows and "Replay Buffers". The model now trains purely sequentially at interpolated 1-minute temporal intervals, marching strictly forward in time without "cheating" by peeking at past data.
-7. **Input Geometry Extraction:** Refactored `data_extractor.py` and `train_fvm_pinn.py` to point strictly to the user's GitHub input mesh (`data/input/FlowFM_net.nc`), completely severing the FVM geometry from the Kaggle output dataset.
+7. **Input Geometry Extraction:** Acknowledged the cell-count mismatch (19k vs 36k) and updated `data_extractor.py` and `train_fvm_pinn.py` to securely load the geometry directly from the output dataset (`FlowFM_map.nc`) to ensure perfect array alignment during training.

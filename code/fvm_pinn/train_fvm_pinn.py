@@ -153,49 +153,42 @@ def main():
     loss_history_phys = []
     
     # =========================================================================
-    # GROWING TIME-WINDOW GLOBAL TRAINING (High Accuracy & No Error Accumulation)
+    # STRICT FORWARD TIME-MARCHING TRAINING (Numerical Solver Paradigm)
     # =========================================================================
-    num_windows = 5
-    iters_per_window = 8000
+    num_epochs = 5
     total_t_steps = len(t_train_array)
-    window_step_size = total_t_steps // num_windows
     
-    print(f"Starting Growing Time-Window Training ({num_windows} Windows, {iters_per_window} iterations per window)...")
+    print(f"Starting Strict Forward Time-Marching Training ({num_epochs} Epochs over {total_t_steps} time steps)...")
     
-    for w in range(1, num_windows + 1):
-        # Current max time index for this growing window
-        max_idx = min(w * window_step_size, total_t_steps - 1)
+    for epoch in range(1, num_epochs + 1):
+        print(f"\n--- Starting Epoch {epoch}/{num_epochs} ---")
         
-        print(f"\n--- Starting Time Window {w}/{num_windows} (Hours 0.0 to {t_train_array[max_idx]/3600.0:.1f}) ---")
+        # Reset accumulators for the epoch
+        epoch_int_loss = 0.0
+        epoch_bc_loss = 0.0
+        epoch_phys_loss = 0.0
         
-        window_int_loss = 0.0
-        window_bc_loss = 0.0
-        window_phys_loss = 0.0
-        
-        for i in range(1, iters_per_window + 1):
-            # Global Time Sampling: Randomly sample ANY time step within the current growing window
-            t_idx = np.random.randint(0, max_idx + 1)
+        # STRICT FORWARD MARCHING: t_idx goes sequentially from 0 to max_time
+        for t_idx in range(total_t_steps):
             
             int_loss, bc_loss, p_loss = trainer.train_step(t_idx)
             
-            window_int_loss += int_loss
-            window_bc_loss += bc_loss
-            window_phys_loss += p_loss
+            epoch_int_loss += int_loss
+            epoch_bc_loss += bc_loss
+            epoch_phys_loss += p_loss
             
-            if i % 1000 == 0:
-                avg_int = window_int_loss / 1000
-                avg_bc = window_bc_loss / 1000
-                avg_phys = window_phys_loss / 1000
+            # Print average loss every 1000 time steps
+            if (t_idx + 1) % 1000 == 0 or t_idx == total_t_steps - 1:
+                avg_int = epoch_int_loss / (t_idx + 1)
+                avg_bc = epoch_bc_loss / (t_idx + 1)
+                avg_phys = epoch_phys_loss / (t_idx + 1)
                 
                 loss_history_data.append(avg_int + avg_bc)
                 loss_history_phys.append(avg_phys)
                 
-                print(f"Window {w} | Iter {i}/{iters_per_window} | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg Phys: {avg_phys:.4f}")
-                
-                # Reset accumulators for next print
-                window_int_loss = 0.0
-                window_bc_loss = 0.0
-                window_phys_loss = 0.0
+                t_hr = t_train_array[t_idx] / 3600.0
+                print(f"Epoch {epoch} | Step {t_idx+1}/{total_t_steps} (Hour {t_hr:.1f}) | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg Phys: {avg_phys:.4f}")
+            
             
     # Save the trained model
     torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model.pth')
