@@ -52,7 +52,7 @@ def main():
     # ==========================================
     # FAST DEBUG MODE TOGGLE (Set to True for a 2-minute test run)
     # ==========================================
-    FAST_DEBUG_MODE = True
+    FAST_DEBUG_MODE = False
     
     if FAST_DEBUG_MODE:
         print("\n!!! FAST DEBUG MODE ENABLED !!!")
