@@ -177,8 +177,8 @@ def main():
             epoch_bc_loss += bc_loss
             epoch_phys_loss += p_loss
             
-            # Print average loss every 1000 time steps
-            if (t_idx + 1) % 1000 == 0 or t_idx == total_t_steps - 1:
+            # Print average loss every 100 time steps so we can see progress faster
+            if (t_idx + 1) % 100 == 0 or t_idx == total_t_steps - 1:
                 avg_int = epoch_int_loss / (t_idx + 1)
                 avg_bc = epoch_bc_loss / (t_idx + 1)
                 avg_phys = epoch_phys_loss / (t_idx + 1)
