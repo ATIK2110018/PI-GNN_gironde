@@ -158,7 +158,7 @@ def main():
     num_epochs = 5
     total_t_steps = len(t_train_array)
     
-    print(f"Starting Strict Forward Time-Marching Training ({num_epochs} Epochs over {total_t_steps} time steps)...")
+    print(f"Starting Randomized Spacetime Training ({num_epochs} Epochs over {total_t_steps} time steps)...")
     
     for epoch in range(1, num_epochs + 1):
         print(f"\n--- Starting Epoch {epoch}/{num_epochs} ---")
@@ -168,8 +168,11 @@ def main():
         epoch_bc_loss = 0.0
         epoch_phys_loss = 0.0
         
-        # STRICT FORWARD MARCHING: t_idx goes sequentially from 0 to max_time
-        for t_idx in range(total_t_steps):
+        # RANDOMIZED TIME SAMPLING: Shatters Catastrophic Forgetting
+        # We shuffle the time indices every epoch so the network learns the global tidal curve
+        t_indices = np.random.permutation(total_t_steps)
+        
+        for step, t_idx in enumerate(t_indices):
             
             int_loss, bc_loss, p_loss = trainer.train_step(t_idx)
             
@@ -178,16 +181,16 @@ def main():
             epoch_phys_loss += p_loss
             
             # Print average loss every 100 time steps so we can see progress faster
-            if (t_idx + 1) % 100 == 0 or t_idx == total_t_steps - 1:
-                avg_int = epoch_int_loss / (t_idx + 1)
-                avg_bc = epoch_bc_loss / (t_idx + 1)
-                avg_phys = epoch_phys_loss / (t_idx + 1)
+            if (step + 1) % 100 == 0 or step == total_t_steps - 1:
+                avg_int = epoch_int_loss / (step + 1)
+                avg_bc = epoch_bc_loss / (step + 1)
+                avg_phys = epoch_phys_loss / (step + 1)
                 
                 loss_history_data.append(avg_int + avg_bc)
                 loss_history_phys.append(avg_phys)
                 
                 t_hr = t_train_array[t_idx] / 3600.0
-                print(f"Epoch {epoch} | Step {t_idx+1}/{total_t_steps} (Hour {t_hr:.1f}) | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg Phys: {avg_phys:.4f}")
+                print(f"Epoch {epoch} | Step {step+1}/{total_t_steps} (Random Hour: {t_hr:.1f}) | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg Phys: {avg_phys:.4f}")
             
             
     # Save the trained model
