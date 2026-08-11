@@ -26,7 +26,10 @@ class HydroPINN(nn.Module):
     def __init__(self):
         super(HydroPINN, self).__init__()
         
-        self.fourier = FourierFeatures(in_features=3, out_features=128, sigma=5.0)
+        # CRITICAL FIX: The tidal wave has ~22 cycles over the normalized t=[0, 1].
+        # If sigma=5.0, the network suffers from spectral bias and acts as a low-pass filter (flatlining).
+        # We MUST set sigma >= 30.0 so the Fourier features can represent high-frequency sine waves.
+        self.fourier = FourierFeatures(in_features=3, out_features=128, sigma=30.0)
         
         # Upgrade Architecture to handle complex FVM fluid dynamics (6 layers, 512 width)
         # We switch to SiLU (Swish) activation which has smoother 2nd derivatives and performs much better in PINNs
