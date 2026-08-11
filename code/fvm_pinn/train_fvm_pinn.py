@@ -55,12 +55,12 @@ def main():
     FAST_DEBUG_MODE = True
     
     if FAST_DEBUG_MODE:
-        print("\n!!! ULTRA-FAST DEBUG MODE ENABLED !!!")
-        print("Slicing data to 10 hours (36000 seconds) to finish in < 2 minutes.")
+        print("\n!!! FAST DEBUG MODE ENABLED !!!")
+        print("Slicing data to 33.3 hours (120000 seconds) to yield exactly 2000 steps per epoch.")
         
-        # Find the index where time exceeds 10 hours (36000 seconds from start)
+        # Find the index where time exceeds 33.3 hours (120000 seconds from start)
         t_start = times_seconds[0]
-        valid_indices = np.where(times_seconds <= t_start + 36000)[0]
+        valid_indices = np.where(times_seconds <= t_start + 120000)[0]
         
         times_seconds = times_seconds[valid_indices]
         true_wl_matrix = true_wl_matrix[valid_indices, :]
@@ -172,7 +172,7 @@ def main():
     # SET EPOCHS
     # =========================================================================
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
-        num_epochs = 2
+        num_epochs = 3
     else:
         num_epochs = 5
         
