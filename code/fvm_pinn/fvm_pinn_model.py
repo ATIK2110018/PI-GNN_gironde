@@ -110,7 +110,7 @@ class FVMPINNTrainer:
         
         return loss_h + loss_u + loss_v
 
-    def train_step(self, t_idx):
+    def train_step(self, t_idx, phys_weight=2.0):
         self.optimizer.zero_grad()
         
         t_val = self.times_seconds[t_idx]
@@ -137,8 +137,8 @@ class FVMPINNTrainer:
         phys_loss = self.compute_physics_loss(t_val, dt=1.0)
         
         # 3. Step Optimizer
-        # Updated to match HydroNet standards: FVM=2.0
-        total_loss = data_loss + 2.0 * phys_loss
+        # Uses dynamic phys_weight based on paper's Warm-Up / PDD strategy
+        total_loss = data_loss + phys_weight * phys_loss
         total_loss.backward()
         
         # Gradient clipping stabilizes stiff FVM gradients

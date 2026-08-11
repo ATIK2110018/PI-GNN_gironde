@@ -202,9 +202,25 @@ def main():
         # Determine number of steps for this epoch based on window size
         current_steps = len(t_indices)
         
+        # ==========================================
+        # LOSS WEIGHT WARM-UP STRATEGY (from PIML Paper)
+        # ==========================================
+        if epoch == 1:
+            current_phys_weight = 0.0 # Purely Data-Driven (PDD) Pre-training
+            print("  -> Epoch 1: Purely Data-Driven Pre-training (Physics Weight = 0.0)")
+        elif epoch == 2:
+            current_phys_weight = 0.5 # Warm-up phase
+            print("  -> Epoch 2: Warm-up Phase (Physics Weight = 0.5)")
+        elif epoch == 3:
+            current_phys_weight = 1.0
+            print("  -> Epoch 3: Scaling Physics (Physics Weight = 1.0)")
+        else:
+            current_phys_weight = 2.0
+            print(f"  -> Epoch {epoch}: Full Physics Constraints (Physics Weight = 2.0)")
+        
         for step, t_idx in enumerate(t_indices):
             
-            int_loss, bc_loss, p_loss = trainer.train_step(t_idx)
+            int_loss, bc_loss, p_loss = trainer.train_step(t_idx, phys_weight=current_phys_weight)
             
             epoch_int_loss += int_loss
             epoch_bc_loss += bc_loss
