@@ -56,9 +56,14 @@ def main():
     
     if FAST_DEBUG_MODE:
         print("\n!!! ULTRA-FAST DEBUG MODE ENABLED !!!")
-        print("Slicing data to 600 steps (10 hours) to finish in < 2 minutes.")
-        times_seconds = times_seconds[:600]
-        true_wl_matrix = true_wl_matrix[:600, :]
+        print("Slicing data to 10 hours (36000 seconds) to finish in < 2 minutes.")
+        
+        # Find the index where time exceeds 10 hours (36000 seconds from start)
+        t_start = times_seconds[0]
+        valid_indices = np.where(times_seconds <= t_start + 36000)[0]
+        
+        times_seconds = times_seconds[valid_indices]
+        true_wl_matrix = true_wl_matrix[valid_indices, :]
     
     x_coords_m = cell_coords[:, 0] * 78700.0
     y_coords_m = cell_coords[:, 1] * 111000.0
