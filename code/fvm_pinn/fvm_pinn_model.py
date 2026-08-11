@@ -49,9 +49,7 @@ class HydroPINN(nn.Module):
             nn.Linear(512, 3) # h, u, v
         )
         
-    def forward(self, t, coords):
-        t_expanded = t.expand(coords.size(0), 1)
-        inputs = torch.cat([t_expanded, coords], dim=1)
+    def forward(self, inputs):
         features = self.fourier(inputs)
         out = self.net(features)
         h = out[:, 0:1]
@@ -81,19 +79,28 @@ class FVMPINNTrainer:
         self.times_seconds = torch.tensor(times_seconds, dtype=torch.float32, device=self.device)
         
         self.pinn = HydroPINN().to(self.device)
-        # Use AdamW for better regularization with GELU networks
-        self.optimizer = torch.optim.AdamW(self.pinn.parameters(), lr=1e-3, weight_decay=1e-5)
+        
+        if torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs for DataParallel!")
+            self.pinn = nn.DataParallel(self.pinn)
+            
+        self.optimizer = torch.optim.Adam(self.pinn.parameters(), lr=1e-3, weight_decay=1e-5)
         
     def get_normalized_t(self, t):
         return (t - self.t_min) / (self.t_max - self.t_min)
+
+    def predict(self, norm_t, norm_coords):
+        t_expanded = norm_t.expand(norm_coords.size(0), 1)
+        inputs = torch.cat([t_expanded, norm_coords], dim=1)
+        return self.pinn(inputs)
 
     def compute_physics_loss(self, t_val, dt):
         norm_t_curr = self.get_normalized_t(t_val.unsqueeze(0))
         t_next = t_val + dt
         norm_t_next = self.get_normalized_t(t_next.unsqueeze(0))
         
-        h_curr, u_curr, v_curr = self.pinn(norm_t_curr, self.norm_coords)
-        h_next, u_next, v_next = self.pinn(norm_t_next, self.norm_coords)
+        h_curr, u_curr, v_curr = self.predict(norm_t_curr, self.norm_coords)
+        h_next, u_next, v_next = self.predict(norm_t_next, self.norm_coords)
         
         # Clamp to avoid FVM crashes on dry cells or random negative initializations
         h_curr_safe = torch.clamp(h_curr, min=0.005)
@@ -118,7 +125,7 @@ class FVMPINNTrainer:
         
         # 1. Evaluate Data Loss
         norm_t_curr = self.get_normalized_t(t_val.unsqueeze(0))
-        h_curr, u_curr, v_curr = self.pinn(norm_t_curr, self.norm_coords)
+        h_curr, u_curr, v_curr = self.predict(norm_t_curr, self.norm_coords)
         
         # PINN predicts Depth (h). True data is Water Level (elevation).
         # Water Level = Depth + Bed Elevation (cell_z)
