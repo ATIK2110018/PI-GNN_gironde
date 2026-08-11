@@ -277,10 +277,9 @@ def main():
             node_coords_m = cell_coords_m[nodes_to_plot]
             norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
             
-            # Predict h
-            h_pred, _, _ = trainer.predict(norm_t, norm_c)
-            # Water level = Depth (h) + Bed Elevation (cell_z)
-            wl_pred = h_pred.cpu().numpy().flatten() + cell_z_np[nodes_to_plot]
+            # Predict Water Level (wl) directly
+            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c)
+            wl_pred = wl_pred_tensor.cpu().numpy().flatten()
             pred_wl[t_idx, :] = wl_pred
             
     plt.figure(figsize=(15, 10))
@@ -307,8 +306,8 @@ def main():
     
     with torch.no_grad():
         norm_t_final = trainer.get_normalized_t(torch.tensor([final_t_val], dtype=torch.float32, device=device))
-        h_pred_final, _, _ = trainer.predict(norm_t_final, trainer.norm_coords)
-        wl_pred_final = h_pred_final.cpu().numpy().flatten() + cell_z_np
+        wl_pred_final_tensor, _, _ = trainer.predict(norm_t_final, trainer.norm_coords)
+        wl_pred_final = wl_pred_final_tensor.cpu().numpy().flatten()
         
     true_wl_final = true_wl_matrix[final_t_idx]
     spatial_error = np.abs(wl_pred_final - true_wl_final)

@@ -52,10 +52,10 @@ class HydroPINN(nn.Module):
     def forward(self, inputs):
         features = self.fourier(inputs)
         out = self.net(features)
-        h = out[:, 0:1]
+        wl = out[:, 0:1] # Predict Water Level directly!
         u = out[:, 1:2]
         v = out[:, 2:3]
-        return h, u, v
+        return wl, u, v
 
 class FVMPINNTrainer:
     def __init__(self, fvm_engine: GPUHydrodynamicModel, cell_coords_m, true_wl_matrix, times_seconds, boundary_mask):
@@ -99,8 +99,12 @@ class FVMPINNTrainer:
         t_next = t_val + dt
         norm_t_next = self.get_normalized_t(t_next.unsqueeze(0))
         
-        h_curr, u_curr, v_curr = self.predict(norm_t_curr, self.norm_coords)
-        h_next, u_next, v_next = self.predict(norm_t_next, self.norm_coords)
+        wl_curr, u_curr, v_curr = self.predict(norm_t_curr, self.norm_coords)
+        wl_next, u_next, v_next = self.predict(norm_t_next, self.norm_coords)
+        
+        # Convert predicted Water Level to Depth for the FVM solver
+        h_curr = wl_curr - self.fvm.cell_z
+        h_next = wl_next - self.fvm.cell_z
         
         # Clamp to avoid FVM crashes on dry cells or random negative initializations
         h_curr_safe = torch.clamp(h_curr, min=0.005)
@@ -125,11 +129,9 @@ class FVMPINNTrainer:
         
         # 1. Evaluate Data Loss
         norm_t_curr = self.get_normalized_t(t_val.unsqueeze(0))
-        h_curr, u_curr, v_curr = self.predict(norm_t_curr, self.norm_coords)
         
-        # PINN predicts Depth (h). True data is Water Level (elevation).
-        # Water Level = Depth + Bed Elevation (cell_z)
-        wl_curr = h_curr + self.fvm.cell_z
+        # Model now predicts Water Level (wl) directly, avoiding the need to memorize bathymetry!
+        wl_curr, u_curr, v_curr = self.predict(norm_t_curr, self.norm_coords)
         
         # CRITICAL FIX: Overwhelming boundary forcing!
         # If we don't force the PINN to respect the boundaries, it will predict a flat lake.
