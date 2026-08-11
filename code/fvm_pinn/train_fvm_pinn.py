@@ -169,8 +169,18 @@ def main():
         epoch_phys_loss = 0.0
         
         # RANDOMIZED TIME SAMPLING: Shatters Catastrophic Forgetting
-        # We shuffle the time indices every epoch so the network learns the global tidal curve
-        t_indices = np.random.permutation(total_t_steps)
+        # HydroNet 'Time-Window' Strategy: Curriculum learning by gradually increasing the time domain
+        window_fraction = epoch / num_epochs
+        window_size = max(1, int(total_t_steps * window_fraction))
+        
+        # We only train on data up to the current window size
+        valid_t_indices = np.arange(window_size)
+        
+        # Shuffle the indices WITHIN the current time window to shatter catastrophic forgetting
+        t_indices = np.random.permutation(valid_t_indices)
+        
+        # Determine number of steps for this epoch based on window size
+        current_steps = len(t_indices)
         
         for step, t_idx in enumerate(t_indices):
             
@@ -181,7 +191,7 @@ def main():
             epoch_phys_loss += p_loss
             
             # Print average loss every 100 time steps so we can see progress faster
-            if (step + 1) % 100 == 0 or step == total_t_steps - 1:
+            if (step + 1) % 100 == 0 or step == current_steps - 1:
                 avg_int = epoch_int_loss / (step + 1)
                 avg_bc = epoch_bc_loss / (step + 1)
                 avg_phys = epoch_phys_loss / (step + 1)
@@ -190,7 +200,7 @@ def main():
                 loss_history_phys.append(avg_phys)
                 
                 t_hr = t_train_array[t_idx] / 3600.0
-                print(f"Epoch {epoch} | Step {step+1}/{total_t_steps} (Random Hour: {t_hr:.1f}) | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg Phys: {avg_phys:.4f}")
+                print(f"Epoch {epoch} | Step {step+1}/{current_steps} (Random Hour: {t_hr:.1f}) | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg Phys: {avg_phys:.4f}")
             
             
     # Save the trained model
