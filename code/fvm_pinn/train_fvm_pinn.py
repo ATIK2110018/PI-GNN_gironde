@@ -174,7 +174,7 @@ def main():
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
         num_epochs = 3
     else:
-        num_epochs = 5
+        num_epochs = 7
         
     total_t_steps = len(t_train_array)
     
@@ -214,9 +214,18 @@ def main():
         elif epoch == 3:
             current_phys_weight = 1.0
             print("  -> Epoch 3: Scaling Physics (Physics Weight = 1.0)")
-        else:
+        elif epoch == 4:
             current_phys_weight = 2.0
-            print(f"  -> Epoch {epoch}: Full Physics Constraints (Physics Weight = 2.0)")
+            print("  -> Epoch 4: Scaling Physics (Physics Weight = 2.0)")
+        elif epoch == 5:
+            current_phys_weight = 3.0
+            print("  -> Epoch 5: Scaling Physics (Physics Weight = 3.0)")
+        elif epoch == 6:
+            current_phys_weight = 4.0
+            print("  -> Epoch 6: Scaling Physics (Physics Weight = 4.0)")
+        else:
+            current_phys_weight = 5.0
+            print(f"  -> Epoch {epoch}: Full Physics Constraints (Physics Weight = 5.0)")
         
         for step, t_idx in enumerate(t_indices):
             
