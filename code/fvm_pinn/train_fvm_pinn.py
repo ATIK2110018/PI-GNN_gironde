@@ -93,7 +93,7 @@ def main():
     
     print("Loading Boundary Conditions from CSV...")
     # Using Kaggle dataset structure: /kaggle/input/[dataset-name]/[filename]
-    bc_df = pd.read_csv('/kaggle/input/datasets/gironde_hydro_out/boundary_conditions.csv')
+    bc_df = pd.read_csv('/kaggle/input/datasets/atikurr/gironde-hydro-out/boundary_conditions.csv')
     
     # Interpolate BCs to match the exact times_seconds from NetCDF
     from scipy.interpolate import interp1d
