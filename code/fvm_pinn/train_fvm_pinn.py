@@ -171,6 +171,7 @@ def main():
         
         epoch_int_loss = 0.0
         epoch_bc_loss = 0.0
+        epoch_ic_loss = 0.0
         epoch_phys_loss = 0.0
         
         # Removed Curriculum Time-Windowing to prevent catastrophic forgetting at late times
@@ -202,22 +203,24 @@ def main():
         
         for step, t_idx in enumerate(t_indices):
             
-            int_loss, bc_loss, p_loss = trainer.train_step(t_idx, phys_weight=current_phys_weight)
+            int_loss, bc_loss, ic_loss, p_loss = trainer.train_step(t_idx, phys_weight=current_phys_weight)
             
             epoch_int_loss += int_loss
             epoch_bc_loss += bc_loss
+            epoch_ic_loss += ic_loss
             epoch_phys_loss += p_loss
             
             if (step + 1) % 100 == 0 or step == current_steps - 1:
                 avg_int = epoch_int_loss / (step + 1)
                 avg_bc = epoch_bc_loss / (step + 1)
+                avg_ic = epoch_ic_loss / (step + 1)
                 avg_phys = epoch_phys_loss / (step + 1)
                 
-                loss_history_data.append(avg_int + avg_bc)
+                loss_history_data.append(avg_int + avg_bc + avg_ic)
                 loss_history_phys.append(avg_phys)
                 
                 t_hr = t_train_array[t_idx] / 3600.0
-                print(f"Epoch {epoch} | Step {step+1}/{current_steps} (Random Hour: {t_hr:.1f}) | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg Phys: {avg_phys:.4f}")
+                print(f"Epoch {epoch} | Step {step+1}/{current_steps} (Random Hour: {t_hr:.1f}) | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg IC: {avg_ic:.4f} | Avg Phys: {avg_phys:.4f}")
         
         trainer.scheduler.step()
         
