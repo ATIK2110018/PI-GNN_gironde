@@ -28,8 +28,6 @@ def main():
     print(f"Starting FVM-PINN Training on {device}")
     
     print("Extracting FVM Geometry...")
-    # CRITICAL FALLBACK: FlowFM_net.nc only has 19,319 cells, but the target data has 36,271 cells.
-    # We MUST use FlowFM_map.nc to ensure the geometry strictly matches the water level arrays.
     nc_file = '/kaggle/input/datasets/atikurr/gironde-hydro-out/FlowFM_map.nc'
     cell_coords_t, cell_z, cell_areas, edge_index, edge_normals, edge_lengths, topo_boundary_mask = extract_fvm_geometry(nc_file, device=device)
     cell_coords = cell_coords_t.cpu().numpy()
@@ -49,16 +47,12 @@ def main():
     times_seconds = ds.variables['time'][:]
     ds.close()
     
-    # ==========================================
-    # FAST DEBUG MODE TOGGLE (Set to True for a 2-minute test run)
-    # ==========================================
     FAST_DEBUG_MODE = False
     
     if FAST_DEBUG_MODE:
         print("\n!!! FAST DEBUG MODE ENABLED !!!")
         print("Slicing data to 33.3 hours (120000 seconds) to yield exactly 2000 steps per epoch.")
         
-        # Find the index where time exceeds 33.3 hours (120000 seconds from start)
         t_start = times_seconds[0]
         valid_indices = np.where(times_seconds <= t_start + 120000)[0]
         
@@ -85,7 +79,6 @@ def main():
     exact_boundary_mask = port_mask | gar_mask | dor_mask
     boundary_mask_t = torch.tensor(exact_boundary_mask, device=device)
     
-    # 1. Instantiate the Differentiable FVM Physics Engine
     fvm_model = GPUHydrodynamicModel(
         cell_coords=cell_coords_m,
         cell_areas=cell_areas_np,
@@ -97,7 +90,6 @@ def main():
         device=device
     )
     
-    # 2. Instantiate the FVM-PINN Trainer
     trainer = FVMPINNTrainer(
         fvm_engine=fvm_model,
         cell_coords_m=torch.tensor(cell_coords_m, dtype=torch.float32, device=device),
@@ -106,71 +98,63 @@ def main():
         boundary_mask=boundary_mask_t
     )
     
-    # ==========================================
-    # PRE-TRAINING PLOTS (Mesh, Depth, Boundaries)
-    # ==========================================
     os.makedirs('/kaggle/working/outputs', exist_ok=True)
-    plt.figure(figsize=(15, 6))
     
-    # Subplot 1: Depth (Bed Elevation)
-    plt.subplot(1, 2, 1)
-    sc1 = plt.scatter(cell_coords_m[:, 0], cell_coords_m[:, 1], c=cell_z_np, cmap='terrain', s=1)
-    plt.colorbar(sc1, label='Bed Elevation (m)')
-    plt.title("Mesh & Depth (Cell Z)")
-    plt.xlabel("X (m)")
-    plt.ylabel("Y (m)")
+    plt.rcParams.update({
+        'font.size': 14, 
+        'axes.titlesize': 16, 
+        'axes.labelsize': 14,
+        'legend.fontsize': 12,
+        'figure.titlesize': 18
+    })
     
-    # Subplot 2: Boundary Lines & Manning's N
-    plt.subplot(1, 2, 2)
-    # Background mesh colored by constant manning's n
+    import matplotlib.tri as tri
+    triangulation = tri.Triangulation(cell_coords_m[:, 0], cell_coords_m[:, 1])
+    
+    fig, axes = plt.subplots(1, 2, figsize=(18, 7), dpi=300)
+    
+    tcf = axes[0].tricontourf(triangulation, cell_z_np, levels=50, cmap='terrain')
+    fig.colorbar(tcf, ax=axes[0], label='Bed Elevation (m)')
+    axes[0].set_title("Estuary Bathymetry")
+    axes[0].set_xlabel("X (m)")
+    axes[0].set_ylabel("Y (m)")
+    
     manning_array = np.full_like(cell_z_np, 0.019)
-    sc2 = plt.scatter(cell_coords_m[:, 0], cell_coords_m[:, 1], c=manning_array, cmap='viridis', s=1)
-    plt.colorbar(sc2, label="Manning's n")
+    tcf2 = axes[1].tricontourf(triangulation, manning_array, levels=10, cmap='viridis')
+    fig.colorbar(tcf2, ax=axes[1], label="Manning's n")
     
-    # Overlay Boundaries
-    plt.scatter(cell_coords_m[port_mask, 0], cell_coords_m[port_mask, 1], c='red', s=10, label='Ocean Boundary')
-    plt.scatter(cell_coords_m[gar_mask, 0], cell_coords_m[gar_mask, 1], c='orange', s=10, label='Garonne Inflow')
-    plt.scatter(cell_coords_m[dor_mask, 0], cell_coords_m[dor_mask, 1], c='magenta', s=10, label='Dordogne Inflow')
+    axes[1].scatter(cell_coords_m[port_mask, 0], cell_coords_m[port_mask, 1], c='red', s=10, label='Ocean Boundary')
+    axes[1].scatter(cell_coords_m[gar_mask, 0], cell_coords_m[gar_mask, 1], c='orange', s=10, label='Garonne Inflow')
+    axes[1].scatter(cell_coords_m[dor_mask, 0], cell_coords_m[dor_mask, 1], c='magenta', s=10, label='Dordogne Inflow')
     
-    # Also plot the original .pli line segments to verify exact extraction
-    plt.plot([p1_port[0]*78700, p2_port[0]*78700], [p1_port[1]*111000, p2_port[1]*111000], 'k-', linewidth=2, label='.pli lines')
-    plt.plot([p1_gar[0]*78700, p2_gar[0]*78700], [p1_gar[1]*111000, p2_gar[1]*111000], 'k-', linewidth=2)
-    plt.plot([p1_dor[0]*78700, p2_dor[0]*78700], [p1_dor[1]*111000, p2_dor[1]*111000], 'k-', linewidth=2)
+    axes[1].plot([p1_port[0]*78700, p2_port[0]*78700], [p1_port[1]*111000, p2_port[1]*111000], 'k-', linewidth=2, label='Boundary Segments')
+    axes[1].plot([p1_gar[0]*78700, p2_gar[0]*78700], [p1_gar[1]*111000, p2_gar[1]*111000], 'k-', linewidth=2)
+    axes[1].plot([p1_dor[0]*78700, p2_dor[0]*78700], [p1_dor[1]*111000, p2_dor[1]*111000], 'k-', linewidth=2)
     
-    plt.title("Boundary Cell Identification & Manning's n")
-    plt.legend()
+    axes[1].set_title("Boundary Forcings & Friction")
+    axes[1].set_xlabel("X (m)")
+    axes[1].legend(loc='lower right')
+    
     plt.tight_layout()
-    plt.savefig('/kaggle/working/outputs/before_training_mesh.png')
+    plt.savefig('/kaggle/working/outputs/before_training_mesh.png', bbox_inches='tight')
     plt.close()
     
-    # ==========================================
-    # INTERPOLATE DATA TO 1-MINUTE TIME STEPS
-    # ==========================================
     print("Interpolating data to 1-minute (60s) intervals for continuous sequential training...")
     from scipy.interpolate import interp1d
     interp_func = interp1d(times_seconds, true_wl_matrix, axis=0, kind='linear')
     
     t_train_array = np.arange(times_seconds[0], times_seconds[-1] + 60, 60)
     
-    # Clip to avoid floating point overshoot
     t_train_array = t_train_array[t_train_array <= times_seconds[-1]]
     
     true_wl_interp = interp_func(t_train_array)
     
-    # Update trainer with the new 1-minute resolution data
     trainer.times_seconds = torch.tensor(t_train_array, dtype=torch.float32, device=device)
     trainer.true_wl_matrix = torch.tensor(true_wl_interp, dtype=torch.float32, device=device)
-    
-    # ==========================================
-    # TRAIN PINN (Sequential 1-Minute Time-Marching)
-    # ==========================================
     
     loss_history_data = []
     loss_history_phys = []
     
-    # =========================================================================
-    # SET EPOCHS
-    # =========================================================================
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
         num_epochs = 3
     else:
@@ -185,33 +169,24 @@ def main():
     for epoch in range(1, num_epochs + 1):
         print(f"\n--- Starting Epoch {epoch}/{num_epochs} ---")
         
-        # Reset accumulators for the epoch
         epoch_int_loss = 0.0
         epoch_bc_loss = 0.0
         epoch_phys_loss = 0.0
         
-        # RANDOMIZED TIME SAMPLING: Shatters Catastrophic Forgetting
-        # HydroNet 'Time-Window' Strategy: Curriculum learning by gradually increasing the time domain
         window_fraction = epoch / num_epochs
         window_size = max(1, int(total_t_steps * window_fraction))
         
-        # We only train on data up to the current window size
         valid_t_indices = np.arange(window_size)
         
-        # Shuffle the indices WITHIN the current time window to shatter catastrophic forgetting
         t_indices = np.random.permutation(valid_t_indices)
         
-        # Determine number of steps for this epoch based on window size
         current_steps = len(t_indices)
         
-        # ==========================================
-        # LOSS WEIGHT WARM-UP STRATEGY (from PIML Paper)
-        # ==========================================
         if epoch == 1:
-            current_phys_weight = 0.0 # Purely Data-Driven (PDD) Pre-training
+            current_phys_weight = 0.0
             print("  -> Epoch 1: Purely Data-Driven Pre-training (Physics Weight = 0.0)")
         elif epoch == 2:
-            current_phys_weight = 0.5 # Warm-up phase
+            current_phys_weight = 0.5
             print("  -> Epoch 2: Warm-up Phase (Physics Weight = 0.5)")
         elif epoch == 3:
             current_phys_weight = 1.0
@@ -234,7 +209,6 @@ def main():
             epoch_bc_loss += bc_loss
             epoch_phys_loss += p_loss
             
-            # Print average loss every 100 time steps so we can see progress faster
             if (step + 1) % 100 == 0 or step == current_steps - 1:
                 avg_int = epoch_int_loss / (step + 1)
                 avg_bc = epoch_bc_loss / (step + 1)
@@ -245,115 +219,182 @@ def main():
                 
                 t_hr = t_train_array[t_idx] / 3600.0
                 print(f"Epoch {epoch} | Step {step+1}/{current_steps} (Random Hour: {t_hr:.1f}) | Avg Data: {avg_int:.4f} | Avg BC: {avg_bc:.4f} | Avg Phys: {avg_phys:.4f}")
-        # Decay learning rate at the end of the epoch
+        
         trainer.scheduler.step()
         
-        # Save Best Model Checkpoint
         if avg_int < best_loss:
             best_loss = avg_int
-            torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model_best.pth')
+            checkpoint = {
+                'model_state_dict': trainer.pinn.state_dict(),
+                't_min': trainer.t_min.item(),
+                't_max': trainer.t_max.item(),
+                'coords_mean': trainer.coords_mean.cpu().numpy(),
+                'coords_std': trainer.coords_std.cpu().numpy(),
+                'epoch': epoch,
+                'loss': best_loss
+            }
+            torch.save(checkpoint, '/kaggle/working/outputs/fvm_pinn_model_best.pth')
             print(f"  -> Saved new best model checkpoint! (Data Loss: {best_loss:.4f})")
             
-    # Save the final model state (even if exploded)
-    torch.save(trainer.pinn.state_dict(), '/kaggle/working/outputs/fvm_pinn_model_final.pth')
+    final_checkpoint = {
+        'model_state_dict': trainer.pinn.state_dict(),
+        't_min': trainer.t_min.item(),
+        't_max': trainer.t_max.item(),
+        'coords_mean': trainer.coords_mean.cpu().numpy(),
+        'coords_std': trainer.coords_std.cpu().numpy(),
+        'epoch': num_epochs
+    }
+    torch.save(final_checkpoint, '/kaggle/working/outputs/fvm_pinn_model_final.pth')
     
-    # Plot Loss Curve
-    plt.figure(figsize=(10, 5))
-    plt.plot(loss_history_data, label='Data Loss')
-    plt.plot(loss_history_phys, label='FVM Physics Loss')
+    plt.figure(figsize=(10, 6), dpi=300)
+    plt.plot(loss_history_data, label='Data Loss', linewidth=2)
+    plt.plot(loss_history_phys, label='FVM Physics Loss', linewidth=2)
     plt.yscale('log')
     plt.xlabel('Epoch')
     plt.ylabel('Loss (MSE)')
-    plt.title('FVM-PINN Training Loss')
+    plt.title('FVM-PINN Training Convergence')
     plt.legend()
-    plt.grid(True)
-    plt.savefig('/kaggle/working/outputs/fvm_pinn_loss.png')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.tight_layout()
+    plt.savefig('/kaggle/working/outputs/fvm_pinn_loss.png', bbox_inches='tight')
     plt.close()
-    
-    # ==========================================
-    # POST-TRAINING TIMESERIES COMPARISON
-    # ==========================================
     
     print("Evaluating full timeseries for 3 interior nodes...")
     trainer.pinn.eval()
     
-    nodes_to_plot = [5000, 15000, 25000] # Three distinct points in the estuary
+    nodes_to_plot = [5000, 15000, 25000]
     times_hr = times_seconds / 3600.0
     
-    # We will build the predicted timeseries by querying the PINN
     pred_wl = np.zeros((len(times_seconds), len(nodes_to_plot)))
     
     with torch.no_grad():
         for t_idx, t_val in enumerate(times_seconds):
-            # Force float32 to prevent Float vs Double dtype mismatch during inference
             norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
-            
-            # Extract coordinates for just the 3 nodes
             node_coords_m = cell_coords_m[nodes_to_plot]
             norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
             
-            # Predict Water Level (wl) directly
             wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c)
-            wl_pred = wl_pred_tensor.cpu().numpy().flatten()
-            pred_wl[t_idx, :] = wl_pred
+            pred_wl[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
             
-    plt.figure(figsize=(15, 10))
-    for i, node_id in enumerate(nodes_to_plot):
-        plt.subplot(3, 1, i+1)
-        plt.plot(times_hr, true_wl_matrix[:, node_id], 'k--', label='True SRH-2D Data', linewidth=2)
-        plt.plot(times_hr, pred_wl[:, i], 'r-', label='FVM-PINN Prediction', alpha=0.8, linewidth=2)
-        plt.title(f'Water Level Timeseries at Interior Node {node_id}')
-        plt.xlabel('Time (Hours)')
-        plt.ylabel('Water Level (m)')
-        plt.legend()
-        plt.grid(True)
+    fig, axes = plt.subplots(3, 1, figsize=(15, 12), dpi=300, sharex=True)
+    for i, (node_id, ax) in enumerate(zip(nodes_to_plot, axes)):
+        true_series = true_wl_matrix[:, node_id]
+        pred_series = pred_wl[:, i]
+        rmse = np.sqrt(np.mean((true_series - pred_series)**2))
         
+        ax.plot(times_hr, true_series, 'k-', label='True FVM Data', linewidth=2, alpha=0.7)
+        ax.plot(times_hr, pred_series, 'r--', label='PINN Prediction', linewidth=2)
+        ax.set_title(f'Water Level at Node {node_id} | RMSE: {rmse:.3f} m')
+        ax.set_ylabel('Water Level (m)')
+        ax.legend(loc='upper right')
+        ax.grid(True, linestyle='--', alpha=0.7)
+        
+    axes[-1].set_xlabel('Time (Hours)')
     plt.tight_layout()
-    plt.savefig('/kaggle/working/outputs/after_training_timeseries.png')
+    plt.savefig('/kaggle/working/outputs/after_training_timeseries.png', bbox_inches='tight')
     plt.close()
     
-    # ==========================================
-    # POST-TRAINING SPATIAL FIELD EVALUATION
-    # ==========================================
-    print("Generating full spatial field comparison for the final time step...")
+    print("Generating high-resolution spatial fields...")
     final_t_idx = len(times_seconds) - 1
     final_t_val = times_seconds[-1]
     
     with torch.no_grad():
         norm_t_final = trainer.get_normalized_t(torch.tensor([final_t_val], dtype=torch.float32, device=device))
-        wl_pred_final_tensor, _, _ = trainer.predict(norm_t_final, trainer.norm_coords)
+        wl_pred_final_tensor, u_pred_final_tensor, v_pred_final_tensor = trainer.predict(norm_t_final, trainer.norm_coords)
         wl_pred_final = wl_pred_final_tensor.cpu().numpy().flatten()
+        u_pred_final = u_pred_final_tensor.cpu().numpy().flatten()
+        v_pred_final = v_pred_final_tensor.cpu().numpy().flatten()
         
     true_wl_final = true_wl_matrix[final_t_idx]
     spatial_error = np.abs(wl_pred_final - true_wl_final)
     
-    plt.figure(figsize=(18, 6))
+    fig, axes = plt.subplots(1, 3, figsize=(24, 7), dpi=300)
     
-    # True Field
-    plt.subplot(1, 3, 1)
-    sc1 = plt.scatter(cell_coords_m[:, 0], cell_coords_m[:, 1], c=true_wl_final, cmap='viridis', s=1)
-    plt.colorbar(sc1, label='Water Level (m)')
-    plt.title("True Water Level (Final Step)")
-    plt.xlabel("X (m)")
-    plt.ylabel("Y (m)")
+    tcf1 = axes[0].tricontourf(triangulation, true_wl_final, levels=50, cmap='GnBu')
+    fig.colorbar(tcf1, ax=axes[0], label='Water Level (m)')
+    axes[0].set_title("True Water Level (Final Step)")
+    axes[0].set_xlabel("X (m)")
+    axes[0].set_ylabel("Y (m)")
     
-    # Predicted Field
-    plt.subplot(1, 3, 2)
-    sc2 = plt.scatter(cell_coords_m[:, 0], cell_coords_m[:, 1], c=wl_pred_final, cmap='viridis', s=1)
-    plt.colorbar(sc2, label='Water Level (m)')
-    plt.title("FVM-PINN Predicted Water Level")
-    plt.xlabel("X (m)")
+    tcf2 = axes[1].tricontourf(triangulation, wl_pred_final, levels=50, cmap='GnBu')
+    fig.colorbar(tcf2, ax=axes[1], label='Water Level (m)')
+    axes[1].set_title("FVM-PINN Prediction")
+    axes[1].set_xlabel("X (m)")
     
-    # Error Field
-    plt.subplot(1, 3, 3)
-    sc3 = plt.scatter(cell_coords_m[:, 0], cell_coords_m[:, 1], c=spatial_error, cmap='Reds', s=1, vmax=np.percentile(spatial_error, 95))
-    plt.colorbar(sc3, label='Absolute Error (m)')
-    plt.title("Spatial Error Map (95th percentile capped)")
-    plt.xlabel("X (m)")
+    vmax_err = np.percentile(spatial_error, 95)
+    tcf3 = axes[2].tricontourf(triangulation, spatial_error, levels=50, cmap='Reds', vmax=vmax_err)
+    fig.colorbar(tcf3, ax=axes[2], label='Absolute Error (m)')
+    rmse_spatial = np.sqrt(np.mean(spatial_error**2))
+    axes[2].set_title(f"Spatial Error | RMSE: {rmse_spatial:.3f} m")
+    axes[2].set_xlabel("X (m)")
     
     plt.tight_layout()
-    plt.savefig('/kaggle/working/outputs/spatial_field_comparison.png')
+    plt.savefig('/kaggle/working/outputs/spatial_field_comparison.png', bbox_inches='tight')
     plt.close()
+    
+    print("Generating velocity vector field...")
+    plt.figure(figsize=(10, 8), dpi=300)
+    
+    step = max(1, len(cell_coords_m) // 3000)
+    x_sub = cell_coords_m[::step, 0]
+    y_sub = cell_coords_m[::step, 1]
+    u_sub = u_pred_final[::step]
+    v_sub = v_pred_final[::step]
+    
+    speed = np.sqrt(u_sub**2 + v_sub**2)
+    
+    plt.tricontourf(triangulation, wl_pred_final, levels=30, cmap='Blues', alpha=0.5)
+    plt.colorbar(label='Water Level (m)')
+    
+    q = plt.quiver(x_sub, y_sub, u_sub, v_sub, speed, cmap='jet', scale=50, width=0.003)
+    plt.colorbar(q, label='Velocity Magnitude (m/s)')
+    plt.title('Predicted Velocity Vector Field')
+    plt.xlabel('X (m)')
+    plt.ylabel('Y (m)')
+    plt.tight_layout()
+    plt.savefig('/kaggle/working/outputs/velocity_vector_field.png', bbox_inches='tight')
+    plt.close()
+    
+    print("Generating water level simulation animation...")
+    import matplotlib.animation as animation
+    
+    num_frames = min(60, len(times_seconds))
+    frame_indices = np.linspace(0, len(times_seconds) - 1, num_frames, dtype=int)
+    
+    fig_anim, ax_anim = plt.subplots(figsize=(10, 8), dpi=150)
+    
+    vmin = np.percentile(true_wl_matrix, 2)
+    vmax = np.percentile(true_wl_matrix, 98)
+    levels = np.linspace(vmin, vmax, 30)
+    
+    dummy_tcf = ax_anim.tricontourf(triangulation, np.full_like(wl_pred_final, vmin), levels=levels, cmap='GnBu')
+    fig_anim.colorbar(dummy_tcf, ax=ax_anim, label='Water Level (m)')
+    
+    def update(frame_idx):
+        ax_anim.clear()
+        t_idx = frame_indices[frame_idx]
+        t_val = times_seconds[t_idx]
+        t_hr = t_val / 3600.0
+        
+        with torch.no_grad():
+            norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
+            wl_pred_tensor, _, _ = trainer.predict(norm_t, trainer.norm_coords)
+            wl_pred = wl_pred_tensor.cpu().numpy().flatten()
+            
+        tcf = ax_anim.tricontourf(triangulation, wl_pred, levels=levels, cmap='GnBu', extend='both')
+        ax_anim.set_title(f"FVM-PINN Water Level Simulation | Time: {t_hr:.2f} Hours")
+        ax_anim.set_xlabel("X (m)")
+        ax_anim.set_ylabel("Y (m)")
+        return tcf,
+        
+    anim = animation.FuncAnimation(fig_anim, update, frames=num_frames, interval=150)
+    anim_file = '/kaggle/working/outputs/water_level_simulation.gif'
+    try:
+        anim.save(anim_file, writer='pillow')
+        print(f"Animation saved to {anim_file}")
+    except Exception as e:
+        print(f"Failed to save animation: {e}")
+    plt.close(fig_anim)
     
     print("Training and Evaluation Complete! All plots saved to /kaggle/working/outputs")
 

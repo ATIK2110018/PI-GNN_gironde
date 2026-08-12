@@ -14,24 +14,21 @@ class GPUHydrodynamicModel:
         self.cell_areas = torch.tensor(cell_areas, dtype=torch.float32, device=device).unsqueeze(1)
         self.cell_z = torch.tensor(cell_z, dtype=torch.float32, device=device).unsqueeze(1)
         
-        # Edge connectivity and geometry
         self.c_L = torch.tensor(edge_index[0, :], dtype=torch.long, device=device)
         self.c_R = torch.tensor(edge_index[1, :], dtype=torch.long, device=device)
         self.nx = torch.tensor(edge_normals[:, 0:1], dtype=torch.float32, device=device)
         self.ny = torch.tensor(edge_normals[:, 1:2], dtype=torch.float32, device=device)
         self.e_len = torch.tensor(edge_lengths, dtype=torch.float32, device=device).unsqueeze(1)
         
-        # Center-to-center distances for exact CFL calculation
         c_coords = torch.tensor(cell_coords, dtype=torch.float32, device=device)
         self.d_LR = torch.norm(c_coords[self.c_R] - c_coords[self.c_L], dim=1)
-        # Prevent degenerate identical cell centers from forcing dt=0
         self.d_LR = torch.clamp(self.d_LR, min=1.0)
         
         self.boundary_mask = boundary_mask
         self.num_cells = cell_areas.shape[0]
         
         self.g = 9.81
-        self.manning_n = 0.019 # True value from user's domain
+        self.manning_n = 0.019
         
     def simulate_one_step(self, h, u, v, h_still, dt):
         """
@@ -39,7 +36,6 @@ class GPUHydrodynamicModel:
         Takes the current state tensors and steps them forward by dt.
         Returns h_next, u_next, v_next.
         """
-        # Riemann Solver for Edge Fluxes
         h_L, h_R = h[self.c_L], h[self.c_R]
         u_L, u_R = u[self.c_L], u[self.c_R]
         v_L, v_R = v[self.c_L], v[self.c_R]
@@ -71,17 +67,11 @@ class GPUHydrodynamicModel:
         div_mom_x /= self.cell_areas
         div_mom_y /= self.cell_areas
         
-        # Explicit State Update
         h_next = h - dt * div_mass
         
         dry_mask = (h_next < 0.005)
-        # Using a smooth clamp proxy (like relu) keeps gradients flowing better for PINNs, 
-        # but standard clamp works fine since PyTorch defines its subgradient.
         h_next = torch.clamp(h_next, min=0.005)
         
-        # Hydrodynamic Source Terms (Bottom Friction)
-        # Without friction, the estuary acts like a frictionless superfluid.
-        # Manning's friction term for momentum: tau = -g * n^2 * u * |V| / h^(1/3)
         velocity_mag = torch.sqrt(u**2 + v**2 + 1e-6)
         friction_coeff = self.g * (self.manning_n ** 2) / (h**(1/3) + 1e-6)
         
@@ -100,7 +90,6 @@ class GPUHydrodynamicModel:
         u_next = torch.clamp(u_next, min=-15.0, max=15.0)
         v_next = torch.clamp(v_next, min=-15.0, max=15.0)
         
-        # Bottom Friction
         u_mag_next = torch.sqrt(u_next**2 + v_next**2 + 1e-8)
         friction = self.g * self.manning_n**2 * u_mag_next / (h_next**(4/3) + 1e-8)
         u_next = u_next / (1.0 + dt * friction)
@@ -127,11 +116,6 @@ class GPUHydrodynamicModel:
             target_time = times_seconds[output_idx]
             
             while current_time < target_time:
-                # To prevent duplicating Riemann solver code, call simulate_one_step!
-                # But we need wave_speed to compute dt first. 
-                # For an explicit solver, we can do a dry-run or just compute wave_speed here.
-                # Since we want exactly the same code for both, let's keep the explicit loop here for performance,
-                # because the dynamic dt requires checking wave_speed BEFORE taking the step.
                 
                 h_L, h_R = h[self.c_L], h[self.c_R]
                 u_L, u_R = u[self.c_L], u[self.c_R]
@@ -185,7 +169,6 @@ class GPUHydrodynamicModel:
                 u_next = u_next / (1.0 + dt * friction)
                 v_next = v_next / (1.0 + dt * friction)
                 
-                # 7. Apply Boundary Conditions
                 if output_idx < len(times_seconds) - 1:
                     t0 = times_seconds[output_idx]
                     t1 = times_seconds[output_idx + 1]
@@ -199,20 +182,15 @@ class GPUHydrodynamicModel:
                 bc_wl_tensor = torch.tensor(bc_wl, dtype=torch.float32, device=self.device)
                 bc_h = torch.clamp(bc_wl_tensor - self.cell_z[self.boundary_mask].squeeze(1), min=0.01)
                 
-                # Force boundary water levels AND set momentum to zero (Infinite Reservoir Assumption)
-                # This prevents boundary cells from accumulating massive negative momentum 
-                # which causes violent oscillations and NaN explosions.
                 h_next[self.boundary_mask, 0] = bc_h
                 hu_next[self.boundary_mask, 0] = 0.0
                 hv_next[self.boundary_mask, 0] = 0.0
                 
-                # Advance Step
                 h = h_next
                 u = u_next
                 v = v_next
                 current_time += dt
                 
-            # Save Output at target time
             eta = (h + self.cell_z).cpu().numpy()
             pred_wl_matrix.append(eta)
             print(f"Time {target_time/3600.0:5.2f} hrs reached | dynamic_dt: {dt:.2f}s | Mean WL: {eta.mean():.2f}m")
