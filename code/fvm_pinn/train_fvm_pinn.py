@@ -41,9 +41,23 @@ def main():
         raw_wl = raw_wl.filled(np.nan)
     true_wl_matrix = np.array(raw_wl, dtype=np.float32)
     
+    # Load velocity data for velocity data loss
+    raw_ucx = ds.variables['mesh2d_ucx'][:]
+    raw_ucy = ds.variables['mesh2d_ucy'][:]
+    if hasattr(raw_ucx, 'filled'):
+        raw_ucx = raw_ucx.filled(0.0)
+        raw_ucy = raw_ucy.filled(0.0)
+    true_ucx_matrix = np.array(raw_ucx, dtype=np.float32)
+    true_ucy_matrix = np.array(raw_ucy, dtype=np.float32)
+    print(f"Loaded velocity data: ucx shape {true_ucx_matrix.shape}, ucy shape {true_ucy_matrix.shape}")
+    
     cell_z_np = cell_z.cpu().numpy().flatten()
     invalid_mask = np.isnan(true_wl_matrix) | (true_wl_matrix < -900)
     true_wl_matrix[invalid_mask] = np.broadcast_to(cell_z_np, true_wl_matrix.shape)[invalid_mask]
+    
+    # Clean velocity NaNs
+    true_ucx_matrix[np.isnan(true_ucx_matrix)] = 0.0
+    true_ucy_matrix[np.isnan(true_ucy_matrix)] = 0.0
     
     times_seconds = ds.variables['time'][:]
     ds.close()
@@ -160,11 +174,15 @@ def main():
     print("Interpolating data to 1-minute (60s) intervals for continuous sequential training...")
     from scipy.interpolate import interp1d
     interp_func = interp1d(times_seconds, true_wl_matrix, axis=0, kind='linear')
+    interp_ucx = interp1d(times_seconds, true_ucx_matrix, axis=0, kind='linear')
+    interp_ucy = interp1d(times_seconds, true_ucy_matrix, axis=0, kind='linear')
     
     t_all_array = np.arange(times_seconds[0], times_seconds[-1] + 60, 60)
     t_all_array = t_all_array[t_all_array <= times_seconds[-1]]
     
     true_wl_interp = interp_func(t_all_array)
+    true_ucx_interp = interp_ucx(t_all_array)
+    true_ucy_interp = interp_ucy(t_all_array)
     bc_matrix_interp = bc_interp(t_all_array)
     bc_matrix_norm_interp = (bc_matrix_interp - bc_mean) / bc_std
     
@@ -174,6 +192,8 @@ def main():
     t_test_array = t_all_array[split_idx:]
     true_wl_train = true_wl_interp[:split_idx]
     true_wl_test = true_wl_interp[split_idx:]
+    true_ucx_train = true_ucx_interp[:split_idx]
+    true_ucy_train = true_ucy_interp[:split_idx]
     bc_norm_train = bc_matrix_norm_interp[:split_idx]
     bc_norm_test = bc_matrix_norm_interp[split_idx:]
     
@@ -181,6 +201,8 @@ def main():
     
     trainer.times_seconds = torch.tensor(t_train_array, dtype=torch.float32, device=device)
     trainer.true_wl_matrix = torch.tensor(true_wl_train, dtype=torch.float32, device=device)
+    trainer.true_ucx_matrix = torch.tensor(true_ucx_train, dtype=torch.float32, device=device)
+    trainer.true_ucy_matrix = torch.tensor(true_ucy_train, dtype=torch.float32, device=device)
     trainer.boundary_forcings = torch.tensor(bc_norm_train, dtype=torch.float32, device=device)
     
     loss_history_data = []
