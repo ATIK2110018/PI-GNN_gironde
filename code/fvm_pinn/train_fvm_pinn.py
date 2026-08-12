@@ -161,17 +161,27 @@ def main():
     from scipy.interpolate import interp1d
     interp_func = interp1d(times_seconds, true_wl_matrix, axis=0, kind='linear')
     
-    t_train_array = np.arange(times_seconds[0], times_seconds[-1] + 60, 60)
+    t_all_array = np.arange(times_seconds[0], times_seconds[-1] + 60, 60)
+    t_all_array = t_all_array[t_all_array <= times_seconds[-1]]
     
-    t_train_array = t_train_array[t_train_array <= times_seconds[-1]]
-    
-    true_wl_interp = interp_func(t_train_array)
-    bc_matrix_interp = bc_interp(t_train_array)
+    true_wl_interp = interp_func(t_all_array)
+    bc_matrix_interp = bc_interp(t_all_array)
     bc_matrix_norm_interp = (bc_matrix_interp - bc_mean) / bc_std
     
+    # --- 80/20 Train/Test Split ---
+    split_idx = int(len(t_all_array) * 0.8)
+    t_train_array = t_all_array[:split_idx]
+    t_test_array = t_all_array[split_idx:]
+    true_wl_train = true_wl_interp[:split_idx]
+    true_wl_test = true_wl_interp[split_idx:]
+    bc_norm_train = bc_matrix_norm_interp[:split_idx]
+    bc_norm_test = bc_matrix_norm_interp[split_idx:]
+    
+    print(f"Train/Test Split: {len(t_train_array)} train steps ({t_train_array[-1]/3600:.0f}h) | {len(t_test_array)} test steps ({t_test_array[-1]/3600:.0f}h)")
+    
     trainer.times_seconds = torch.tensor(t_train_array, dtype=torch.float32, device=device)
-    trainer.true_wl_matrix = torch.tensor(true_wl_interp, dtype=torch.float32, device=device)
-    trainer.boundary_forcings = torch.tensor(bc_matrix_norm_interp, dtype=torch.float32, device=device)
+    trainer.true_wl_matrix = torch.tensor(true_wl_train, dtype=torch.float32, device=device)
+    trainer.boundary_forcings = torch.tensor(bc_norm_train, dtype=torch.float32, device=device)
     
     loss_history_data = []
     loss_history_phys = []
@@ -243,6 +253,8 @@ def main():
                 't_max': trainer.t_max.item(),
                 'coords_mean': trainer.coords_mean.cpu().numpy(),
                 'coords_std': trainer.coords_std.cpu().numpy(),
+                'z_mean': trainer.z_mean.item(),
+                'z_std': trainer.z_std.item(),
                 'epoch': epoch,
                 'loss': best_loss,
                 'bc_mean': bc_mean,
@@ -257,6 +269,8 @@ def main():
         't_max': trainer.t_max.item(),
         'coords_mean': trainer.coords_mean.cpu().numpy(),
         'coords_std': trainer.coords_std.cpu().numpy(),
+        'z_mean': trainer.z_mean.item(),
+        'z_std': trainer.z_std.item(),
         'bc_mean': bc_mean,
         'bc_std': bc_std,
         'epoch': num_epochs
@@ -265,7 +279,7 @@ def main():
     
     plt.figure(figsize=(10, 6), dpi=300)
     plt.plot(loss_history_data, label='Data Loss', linewidth=2)
-    plt.plot(loss_history_phys, label='FVM Physics Loss', linewidth=2)
+    plt.plot(loss_history_phys, label='SWE Physics Loss', linewidth=2)
     plt.yscale('log')
     plt.xlabel('Epoch')
     plt.ylabel('Loss (MSE)')
@@ -284,6 +298,7 @@ def main():
     
     pred_wl = np.zeros((len(times_seconds), len(nodes_to_plot)))
     
+    node_z = trainer.norm_z[nodes_to_plot]  # normalized bathymetry at selected nodes
     with torch.no_grad():
         for t_idx, t_val in enumerate(times_seconds):
             norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
@@ -291,7 +306,7 @@ def main():
             norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
             norm_bc = torch.tensor(bc_matrix_norm[t_idx:t_idx+1], dtype=torch.float32, device=device)
             
-            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c, norm_bc)
+            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c, norm_bc, norm_z=node_z)
             pred_wl[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
             
     fig, axes = plt.subplots(5, 1, figsize=(15, 20), dpi=300, sharex=True)
@@ -338,13 +353,14 @@ def main():
         
     pred_wl_obs = np.zeros((len(times_seconds), len(obs_nodes)))
     
+    obs_z = trainer.norm_z[obs_nodes]  # normalized bathymetry at obs stations
     with torch.no_grad():
         for t_idx, t_val in enumerate(times_seconds):
             norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
             node_coords_m = cell_coords_m[obs_nodes]
             norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
             norm_bc = torch.tensor(bc_matrix_norm[t_idx:t_idx+1], dtype=torch.float32, device=device)
-            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c, norm_bc)
+            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c, norm_bc, norm_z=obs_z)
             pred_wl_obs[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
             
     fig, axes = plt.subplots(4, 2, figsize=(20, 16), dpi=300, sharex=True)
@@ -473,6 +489,48 @@ def main():
     except Exception as e:
         print(f"Failed to save animation: {e}")
     plt.close(fig_anim)
+    
+    # --- VALIDATION SET EVALUATION (Unseen last 20% of time series) ---
+    print("\n=== VALIDATION: Evaluating on UNSEEN test set (last 20% of time series) ===")
+    
+    val_nodes = [1000, 8000, 15000, 22000]
+    val_node_z = trainer.norm_z[val_nodes]
+    pred_wl_val = np.zeros((len(t_test_array), len(val_nodes)))
+    
+    with torch.no_grad():
+        for t_idx, t_val in enumerate(t_test_array):
+            norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
+            node_coords_m = cell_coords_m[val_nodes]
+            norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
+            # Use test BC data (unseen during training)
+            norm_bc = torch.tensor(bc_norm_test[t_idx:t_idx+1], dtype=torch.float32, device=device)
+            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c, norm_bc, norm_z=val_node_z)
+            pred_wl_val[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
+    
+    test_times_hr = t_test_array / 3600.0
+    fig, axes = plt.subplots(len(val_nodes), 1, figsize=(15, 4*len(val_nodes)), dpi=300, sharex=True)
+    for i, (node_id, ax) in enumerate(zip(val_nodes, axes)):
+        true_series = true_wl_test[:, node_id]
+        pred_series = pred_wl_val[:, i]
+        
+        rmse = np.sqrt(np.mean((true_series - pred_series)**2))
+        nse = 1 - np.sum((true_series - pred_series)**2) / (np.sum((true_series - np.mean(true_series))**2) + 1e-8)
+        r2 = np.corrcoef(true_series, pred_series)[0, 1]**2
+        
+        ax.plot(test_times_hr, true_series, 'k-', label='True FVM Data (UNSEEN)', linewidth=2, alpha=0.7)
+        ax.plot(test_times_hr, pred_series, 'b--', label='PINN Prediction', linewidth=2)
+        ax.axvline(x=t_train_array[-1]/3600.0, color='red', linestyle=':', linewidth=2, alpha=0.5, label='Train/Test Boundary')
+        ax.set_title(f'VALIDATION Node {node_id} | RMSE: {rmse:.3f} m | R²: {r2:.3f} | NSE: {nse:.3f}')
+        ax.set_ylabel('Water Level (m)')
+        ax.legend(loc='upper right')
+        ax.grid(True, linestyle='--', alpha=0.7)
+    
+    axes[-1].set_xlabel('Time (Hours)')
+    plt.suptitle('VALIDATION SET — Model Performance on Unseen Boundary Conditions', fontsize=16, fontweight='bold')
+    plt.tight_layout()
+    plt.savefig('/kaggle/working/outputs/validation_timeseries.png', bbox_inches='tight')
+    plt.close()
+    print("Validation plots saved!")
     
     print("Training and Evaluation Complete! All plots saved to /kaggle/working/outputs")
 
