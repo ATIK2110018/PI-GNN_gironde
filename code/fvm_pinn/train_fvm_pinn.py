@@ -179,7 +179,7 @@ def main():
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
         num_epochs = 5
     else:
-        num_epochs = 50
+        num_epochs = 60
         
     total_t_steps = len(t_train_array)
     
@@ -195,8 +195,8 @@ def main():
         epoch_ic_loss = 0.0
         epoch_phys_loss = 0.0
         
-        # Expand window slightly every epoch so it reaches the full month around epoch 50
-        window_size = int(min(2000 + (epoch - 1) * (total_t_steps / 50), total_t_steps))
+        # Expand window slightly every epoch so it reaches the full month around epoch 20
+        window_size = int(min(2000 + (epoch - 1) * (total_t_steps / 20), total_t_steps))
         valid_t_indices = np.arange(window_size)
         
         # Option 2: Fast Epochs. We only sample 500 steps per epoch!
