@@ -179,7 +179,7 @@ def main():
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
         num_epochs = 5
     else:
-        num_epochs = 5
+        num_epochs = 100
         
     total_t_steps = len(t_train_array)
     
@@ -195,21 +195,22 @@ def main():
         epoch_ic_loss = 0.0
         epoch_phys_loss = 0.0
         
-        # Re-enabled Curriculum Time-Windowing for accurate PDE causality
-        # We start with a window size of 2000 steps and expand it every epoch
-        window_size = min(2000 + (epoch - 1) * 3000, total_t_steps)
+        # Expand window slightly every epoch so it reaches the full month around epoch 50
+        window_size = int(min(2000 + (epoch - 1) * (total_t_steps / 50), total_t_steps))
         valid_t_indices = np.arange(window_size)
         
-        t_indices = np.random.permutation(valid_t_indices)
+        # Option 2: Fast Epochs. We only sample 500 steps per epoch!
+        steps_per_epoch = 500
+        t_indices = np.random.choice(valid_t_indices, size=min(steps_per_epoch, window_size), replace=False)
         
         current_steps = len(t_indices)
         
-        if epoch == 1:
+        if epoch <= 10:
             current_phys_weight = 0.0
-            print("  -> Epoch 1: Purely Data-Driven Pre-training (Physics Weight = 0.0)")
+            print(f"  -> Epoch {epoch}: Purely Data-Driven Pre-training (Physics Weight = 0.0) | Window: {window_size} mins")
         else:
             current_phys_weight = 2.0
-            print(f"  -> Epoch {epoch}: Full Physics Constraints (Physics Weight = 2.0)")
+            print(f"  -> Epoch {epoch}: Full Physics Constraints (Physics Weight = 2.0) | Window: {window_size} mins")
         
         for step, t_idx in enumerate(t_indices):
             
