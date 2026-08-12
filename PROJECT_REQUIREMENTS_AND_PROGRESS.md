@@ -1,24 +1,101 @@
-# Gironde Estuary FVM-PINN: Requirements, Problems, and Progress
+# Gironde Estuary Parametric PINN Surrogate for Tidal Hydrodynamics
 
-## 1. Clear Statement of Requirements (What the User Wants)
-* **Numerical Solver Paradigm:** The Neural Network must act **exactly** like a traditional numerical hydrodynamic solver (forward-marching in time). It should not act like a naive global surrogate mapping function that randomly looks at past or future data.
-* **Physics-Driven:** The explicit FVM physics (Shallow Water Equations) must be the primary driving force. The observational data is only meant to "guide" the model, not act as a shortcut for the model to blindly memorize the answers.
-* **Geometry Extraction Compromise:** While strict data separation is ideal, the raw input file (`FlowFM_net.nc`) only contains 19,319 cells, whereas the target output data has 36,271 cells. Therefore, the FVM geometry (mesh topology, cell locations, and bed elevations) must be extracted from the Kaggle output file (`FlowFM_map.nc`) to ensure the spatial structure strictly matches the output arrays.
-* **Domain Parameters:** The Manning's roughness coefficient ($n$) must be strictly set to `0.019` for the entire domain.
+## 1. Project Objective
 
-## 2. The Core Problem We Are Facing
-The primary obstacle during training is the **"Hydrostatic Trap" (Flatline Phenomenon)**.
-* When the Neural Network initially guesses the water depth, it tends to predict a completely flat water level with zero velocity.
-* Unfortunately, a perfectly still, flat lake with zero velocity is an **exact mathematical solution** to the Shallow Water Equations. 
-* Because it is a valid physical state, the rigorous FVM Physics Loss evaluates to exactly `0.0`. The Neural Network falls into this local minimum trap because predicting a flat line is mathematically infinitely easier than predicting a complex, propagating 265-hour tidal wave across 36,271 unstructured cells.
+Build a **parametric Physics-Informed Neural Network (PINN)** surrogate that learns the 2D Shallow Water Equations governing the Gironde estuary from D-Flow FM simulation data. The model takes a **7D input** `[t, x, y, z, H_ocean, Q_garonne, Q_dordogne]` and predicts the full hydrodynamic state `[η, u, v]` (water surface elevation, x-velocity, y-velocity) at any point in space-time, conditioned on dynamic boundary forcing.
 
-## 3. What We Have Tried (and Implemented) Till Now
-1. **Explicit FVM Physics Engine:** Built the `GPUHydrodynamicModel` incorporating explicit Euler time-stepping and a Roe-flux Riemann solver to perfectly replicate standard numerical hydrodynamics on the GPU.
-2. **Data Loss Correction (Depth vs Elevation):** Discovered the Neural Network was predicting Water Depth ($h$), but the Data Loss was penalizing it against Water Level ($WL$). Fixed this by calculating `Water Level = Depth + Bed Elevation` in the loss function to prevent the model from instantly draining the estuary.
-3. **Manning's $n$ Correction:** Hardcoded Manning's $n$ to exactly `0.019` throughout the codebase.
-4. **Fourier Features (Positional Encoding):** Injected Fourier Features into the Neural Network architecture with an extremely high frequency scale (`sigma=30.0`). Standard neural networks suffer from "Spectral Bias" and cannot bend fast enough to resolve 21 tidal cycles. This upgrade mathematically guarantees the network can draw sharp tidal peaks.
-5. **Loss Balancing (100x Multipliers):** 
-   * Multiplied the Boundary Data Loss by `100.0` to force the network to feel the ocean tide hitting the boundary.
-   * Multiplied the Physics Loss by `100.0` to ensure the optimizer prioritizes gravity and momentum conservation, rather than lazily overfitting the data.
-6. **Strict Forward Time-Marching (Numerical Solver Paradigm):** Removed all randomized training windows and "Replay Buffers". The model now trains purely sequentially at interpolated 1-minute temporal intervals, marching strictly forward in time without "cheating" by peeking at past data.
-7. **Input Geometry Extraction:** Acknowledged the cell-count mismatch (19k vs 36k) and updated `data_extractor.py` and `train_fvm_pinn.py` to securely load the geometry directly from the output dataset (`FlowFM_map.nc`) to ensure perfect array alignment during training.
+## 2. Architecture
+
+| Component | Description |
+|-----------|-------------|
+| **Input** | 7D: normalized time, spatial coords (x, y), bathymetry (z), boundary conditions (H, Q₁, Q₂) |
+| **Fourier Features** | Random Fourier mapping (σ_t=30, σ_s=1) to overcome spectral bias for tidal oscillations |
+| **Network** | 6-layer MLP (512 units each), SiLU activations |
+| **Output** | 3D: water surface elevation (η), x-velocity (u), y-velocity (v) |
+| **Mesh** | 36,271 unstructured FVM cells, 53,224 internal faces from D-Flow FM |
+
+## 3. Loss Function
+
+```
+L_total = 10·L_data + 30·L_boundary + 5·L_velocity + 20·L_IC + λ_phys·L_SWE
+```
+
+| Term | Description |
+|------|-------------|
+| `L_data` | MSE of η at interior cells vs D-Flow FM ground truth |
+| `L_boundary` | MSE of η at boundary cells (ocean, Garonne, Dordogne inlets) |
+| `L_velocity` | MSE of (u, v) at interior cells vs D-Flow FM `mesh2d_ucx`/`mesh2d_ucy` |
+| `L_IC` | MSE of η at t=0 (initial condition enforcement) |
+| `L_SWE` | Autograd-based Shallow Water Equation residuals (mass + momentum) |
+
+### SWE Physics Residuals (computed via `torch.autograd.grad` with chain-rule correction)
+
+- **Mass**: `∂η/∂t + u·∂h/∂x + h·∂u/∂x + v·∂h/∂y + h·∂v/∂y = 0`
+- **x-Momentum**: `∂u/∂t + u·∂u/∂x + v·∂u/∂y + g·∂η/∂x + friction = 0`
+- **y-Momentum**: `∂v/∂t + u·∂v/∂x + v·∂v/∂y + g·∂η/∂y + friction = 0`
+
+Bed slopes (`∂z/∂x`, `∂z/∂y`) are precomputed via Green-Gauss gradient reconstruction on the unstructured mesh.
+
+## 4. Training Strategy
+
+| Phase | Epochs | Physics Weight | Description |
+|-------|--------|---------------|-------------|
+| Data Pre-training | 1–10 | 0.0 | Pure data fitting (η, u, v) to establish base solution |
+| Physics-Informed | 11–60 | 2.0 | Full SWE constraints activated |
+
+- **Curriculum Learning**: Training window expands from 2,000 minutes to full dataset by Epoch 20
+- **Steps per Epoch**: min(3000, window_size) random spacetime samples
+- **Optimizer**: Adam (lr=1e-3, weight_decay=1e-5) with ExponentialLR (γ=0.8)
+- **Gradient Clipping**: max_norm=1.0
+
+## 5. Validation
+
+- **80/20 temporal train/test split**: First 80% (~210 hours) for training, last 20% (~55 hours) held out
+- **Best model checkpoint**: Saved only during physics-constrained epochs (λ_phys > 0)
+- **Metrics**: RMSE, R², NSE evaluated at 8 observation stations and 5 interior nodes
+
+## 6. Domain Parameters
+
+- **Manning's n**: 0.019 (uniform)
+- **Gravity**: 9.81 m/s²
+- **Coordinate system**: Lat/Lon scaled to meters (78,700 m/deg lon, 111,000 m/deg lat at ~45°N)
+- **Minimum water depth**: 0.01 m (dry cell threshold)
+
+## 7. Output Files
+
+| File | Description |
+|------|-------------|
+| `fvm_pinn_model_best.pth` | Best checkpoint (physics-constrained epochs only) |
+| `fvm_pinn_model_final.pth` | Final epoch checkpoint |
+| `fvm_pinn_loss.png` | Training convergence (data + physics loss curves) |
+| `after_training_timeseries.png` | η predictions at 5 interior nodes |
+| `observation_points_timeseries.png` | η predictions at 8 observation stations |
+| `spatial_field_comparison.png` | Spatial η field: true vs predicted vs error |
+| `velocity_vector_field.png` | Predicted velocity vectors over water level |
+| `water_level_simulation.gif` | Animated tidal simulation |
+| `validation_timeseries.png` | Performance on UNSEEN test set (last 20%) |
+
+## 8. Project Structure
+
+```
+code/fvm_pinn/
+├── train_fvm_pinn.py      # Training + evaluation pipeline (entry point)
+├── fvm_pinn_model.py      # HydroPINN architecture + FVMPINNTrainer
+├── numerical_model.py     # GPU FVM engine (bed slope computation)
+├── riemann_solver.py      # Roe-flux 2D Riemann solver
+├── data_extractor.py      # Unstructured mesh geometry extraction
+└── requirements.txt       # Python dependencies
+```
+
+## 9. How to Run (Kaggle)
+
+```bash
+# Cell 1: Clone
+!git clone https://github.com/ATIK2110018/gironde_PINN.git code
+
+# Cell 2: Train
+%cd /kaggle/working/code/fvm_pinn
+!python train_fvm_pinn.py
+```
+
+Requires Kaggle dataset: `atikurr/gironde-hydro-out` (containing `FlowFM_map.nc` and `boundary_conditions.csv`)

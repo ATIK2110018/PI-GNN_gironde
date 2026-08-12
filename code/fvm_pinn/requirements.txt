@@ -1,5 +1,6 @@
-netCDF4
-numpy
 torch
+numpy
 scipy
 matplotlib
+netCDF4
+pandas
