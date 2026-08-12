@@ -173,10 +173,9 @@ def main():
         epoch_bc_loss = 0.0
         epoch_phys_loss = 0.0
         
-        window_fraction = epoch / num_epochs
-        window_size = max(1, int(total_t_steps * window_fraction))
-        
-        valid_t_indices = np.arange(window_size)
+        # Removed Curriculum Time-Windowing to prevent catastrophic forgetting at late times
+        # We now sample the entire time domain uniformly in every epoch
+        valid_t_indices = np.arange(total_t_steps)
         
         t_indices = np.random.permutation(valid_t_indices)
         
@@ -259,10 +258,10 @@ def main():
     plt.savefig('/kaggle/working/outputs/fvm_pinn_loss.png', bbox_inches='tight')
     plt.close()
     
-    print("Evaluating full timeseries for 3 interior nodes...")
+    print("Evaluating full timeseries for 5 interior nodes...")
     trainer.pinn.eval()
     
-    nodes_to_plot = [5000, 15000, 25000]
+    nodes_to_plot = [1000, 8000, 15000, 22000, 29000]
     times_hr = times_seconds / 3600.0
     
     pred_wl = np.zeros((len(times_seconds), len(nodes_to_plot)))
@@ -276,15 +275,18 @@ def main():
             wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c)
             pred_wl[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
             
-    fig, axes = plt.subplots(3, 1, figsize=(15, 12), dpi=300, sharex=True)
+    fig, axes = plt.subplots(5, 1, figsize=(15, 20), dpi=300, sharex=True)
     for i, (node_id, ax) in enumerate(zip(nodes_to_plot, axes)):
         true_series = true_wl_matrix[:, node_id]
         pred_series = pred_wl[:, i]
+        
         rmse = np.sqrt(np.mean((true_series - pred_series)**2))
+        nse = 1 - np.sum((true_series - pred_series)**2) / np.sum((true_series - np.mean(true_series))**2)
+        r2 = np.corrcoef(true_series, pred_series)[0, 1]**2
         
         ax.plot(times_hr, true_series, 'k-', label='True FVM Data', linewidth=2, alpha=0.7)
         ax.plot(times_hr, pred_series, 'r--', label='PINN Prediction', linewidth=2)
-        ax.set_title(f'Water Level at Node {node_id} | RMSE: {rmse:.3f} m')
+        ax.set_title(f'Water Level at Interior Node {node_id} | RMSE: {rmse:.3f} m | R²: {r2:.3f} | NSE: {nse:.3f}')
         ax.set_ylabel('Water Level (m)')
         ax.legend(loc='upper right')
         ax.grid(True, linestyle='--', alpha=0.7)
@@ -292,6 +294,60 @@ def main():
     axes[-1].set_xlabel('Time (Hours)')
     plt.tight_layout()
     plt.savefig('/kaggle/working/outputs/after_training_timeseries.png', bbox_inches='tight')
+    plt.close()
+    
+    print("Evaluating full timeseries for 8 observation stations...")
+    obs_points_deg = {
+        'Lamena': [-0.795668429, 45.3363917],
+        'Richard': [-0.923556245, 45.45450201],
+        'Le Marquis': [-0.562383073, 45.00226741],
+        'Fort Medoc': [-0.70027, 45.11798],
+        'Pauillac': [-0.735575683, 45.18813893],
+        'P4': [-0.711385121, 45.25392645],
+        'P1': [-1.001201556, 45.59041047],
+        'P2': [-0.909977411, 45.53429328]
+    }
+    
+    obs_nodes = []
+    obs_names = []
+    for name, coords in obs_points_deg.items():
+        coords_m = np.array(coords) * np.array([78700.0, 111000.0])
+        dist = np.sum((cell_coords_m - coords_m)**2, axis=1)
+        nearest_node = np.argmin(dist)
+        obs_nodes.append(nearest_node)
+        obs_names.append(name)
+        
+    pred_wl_obs = np.zeros((len(times_seconds), len(obs_nodes)))
+    
+    with torch.no_grad():
+        for t_idx, t_val in enumerate(times_seconds):
+            norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
+            node_coords_m = cell_coords_m[obs_nodes]
+            norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
+            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c)
+            pred_wl_obs[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
+            
+    fig, axes = plt.subplots(4, 2, figsize=(20, 16), dpi=300, sharex=True)
+    axes = axes.flatten()
+    for i, (node_id, name, ax) in enumerate(zip(obs_nodes, obs_names, axes)):
+        true_series = true_wl_matrix[:, node_id]
+        pred_series = pred_wl_obs[:, i]
+        
+        rmse = np.sqrt(np.mean((true_series - pred_series)**2))
+        nse = 1 - np.sum((true_series - pred_series)**2) / np.sum((true_series - np.mean(true_series))**2)
+        r2 = np.corrcoef(true_series, pred_series)[0, 1]**2
+        
+        ax.plot(times_hr, true_series, 'k-', label='True FVM Data', linewidth=2, alpha=0.7)
+        ax.plot(times_hr, pred_series, 'r--', label='PINN Prediction', linewidth=2)
+        ax.set_title(f'Station: {name} (Node {node_id}) | RMSE: {rmse:.3f} m | R²: {r2:.3f} | NSE: {nse:.3f}')
+        ax.set_ylabel('Water Level (m)')
+        ax.legend(loc='upper right')
+        ax.grid(True, linestyle='--', alpha=0.7)
+        
+    axes[-2].set_xlabel('Time (Hours)')
+    axes[-1].set_xlabel('Time (Hours)')
+    plt.tight_layout()
+    plt.savefig('/kaggle/working/outputs/observation_points_timeseries.png', bbox_inches='tight')
     plt.close()
     
     print("Generating high-resolution spatial fields...")
