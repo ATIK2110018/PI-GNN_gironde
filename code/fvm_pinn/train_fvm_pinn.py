@@ -354,7 +354,8 @@ def main():
             norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
             node_coords_m = cell_coords_m[obs_nodes]
             norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
-            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c)
+            norm_bc = torch.tensor(bc_matrix_norm[t_idx:t_idx+1], dtype=torch.float32, device=device)
+            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c, norm_bc)
             pred_wl_obs[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
             
     fig, axes = plt.subplots(4, 2, figsize=(20, 16), dpi=300, sharex=True)
@@ -386,7 +387,8 @@ def main():
     
     with torch.no_grad():
         norm_t_final = trainer.get_normalized_t(torch.tensor([final_t_val], dtype=torch.float32, device=device))
-        wl_pred_final_tensor, u_pred_final_tensor, v_pred_final_tensor = trainer.predict(norm_t_final, trainer.norm_coords)
+        norm_bc_final = torch.tensor(bc_matrix_norm[final_t_idx:final_t_idx+1], dtype=torch.float32, device=device)
+        wl_pred_final_tensor, u_pred_final_tensor, v_pred_final_tensor = trainer.predict(norm_t_final, trainer.norm_coords, norm_bc_final)
         wl_pred_final = wl_pred_final_tensor.cpu().numpy().flatten()
         u_pred_final = u_pred_final_tensor.cpu().numpy().flatten()
         v_pred_final = v_pred_final_tensor.cpu().numpy().flatten()
@@ -464,7 +466,8 @@ def main():
         
         with torch.no_grad():
             norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
-            wl_pred_tensor, _, _ = trainer.predict(norm_t, trainer.norm_coords)
+            norm_bc_anim = torch.tensor(bc_matrix_norm[t_idx:t_idx+1], dtype=torch.float32, device=device)
+            wl_pred_tensor, _, _ = trainer.predict(norm_t, trainer.norm_coords, norm_bc_anim)
             wl_pred = wl_pred_tensor.cpu().numpy().flatten()
             
         tcf = ax_anim.tricontourf(triangulation, wl_pred, levels=levels, cmap='GnBu', extend='both')
