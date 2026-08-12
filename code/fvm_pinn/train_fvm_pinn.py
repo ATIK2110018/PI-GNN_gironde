@@ -177,9 +177,9 @@ def main():
     loss_history_phys = []
     
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
-        num_epochs = 1
+        num_epochs = 2
     else:
-        num_epochs = 1
+        num_epochs = 2
         
     total_t_steps = len(t_train_array)
     
@@ -207,8 +207,8 @@ def main():
             current_phys_weight = 0.0
             print("  -> Epoch 1: Purely Data-Driven Pre-training (Physics Weight = 0.0)")
         elif epoch == 2:
-            current_phys_weight = 0.5
-            print("  -> Epoch 2: Warm-up Phase (Physics Weight = 0.5)")
+            current_phys_weight = 2.0
+            print("  -> Epoch 2: Full Physics Constraints (Physics Weight = 2.0)")
         elif epoch == 3:
             current_phys_weight = 1.0
             print("  -> Epoch 3: Scaling Physics (Physics Weight = 1.0)")
