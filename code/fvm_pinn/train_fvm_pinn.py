@@ -235,7 +235,7 @@ def main():
         
         trainer.scheduler.step()
         
-        if avg_int < best_loss:
+        if avg_int < best_loss and current_phys_weight > 0.0:
             best_loss = avg_int
             checkpoint = {
                 'model_state_dict': trainer.pinn.state_dict(),
