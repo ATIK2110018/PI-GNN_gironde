@@ -195,9 +195,10 @@ def main():
         epoch_ic_loss = 0.0
         epoch_phys_loss = 0.0
         
-        # Removed Curriculum Time-Windowing to prevent catastrophic forgetting at late times
-        # We now sample the entire time domain uniformly in every epoch
-        valid_t_indices = np.arange(total_t_steps)
+        # Re-enabled Curriculum Time-Windowing for accurate PDE causality
+        # We start with a window size of 2000 steps and expand it every epoch
+        window_size = min(2000 + (epoch - 1) * 3000, total_t_steps)
+        valid_t_indices = np.arange(window_size)
         
         t_indices = np.random.permutation(valid_t_indices)
         
