@@ -8,7 +8,7 @@ class FourierFeatures(nn.Module):
     Random Fourier Feature Mapping (Positional Encoding)
     Shatters the Spectral Bias so the network can learn high-frequency tidal waves.
     """
-    def __init__(self, in_features=3, out_features=128, sigma_t=30.0, sigma_s=1.0):
+    def __init__(self, in_features=6, out_features=128, sigma_t=30.0, sigma_s=1.0):
         super().__init__()
         self.out_features = out_features
         B_t = torch.randn(1, out_features // 2) * sigma_t
@@ -26,7 +26,7 @@ class HydroPINN(nn.Module):
     """
     def __init__(self):
         super(HydroPINN, self).__init__()
-        self.fourier = FourierFeatures(in_features=3, out_features=128, sigma_t=30.0, sigma_s=1.0)
+        self.fourier = FourierFeatures(in_features=6, out_features=128, sigma_t=30.0, sigma_s=1.0)
         self.net = nn.Sequential(
             nn.Linear(128, 512),
             nn.SiLU(),
@@ -52,7 +52,7 @@ class HydroPINN(nn.Module):
         return wl, u, v
 
 class FVMPINNTrainer:
-    def __init__(self, fvm_engine: GPUHydrodynamicModel, cell_coords_m, true_wl_matrix, times_seconds, boundary_mask):
+    def __init__(self, fvm_engine: GPUHydrodynamicModel, cell_coords_m, true_wl_matrix, times_seconds, boundary_mask, boundary_forcings):
         self.fvm = fvm_engine
         self.device = fvm_engine.device
         
@@ -69,6 +69,7 @@ class FVMPINNTrainer:
         
         self.true_wl_matrix = torch.tensor(true_wl_matrix, dtype=torch.float32, device=self.device)
         self.times_seconds = torch.tensor(times_seconds, dtype=torch.float32, device=self.device)
+        self.boundary_forcings = torch.tensor(boundary_forcings, dtype=torch.float32, device=self.device)
         
         self.pinn = HydroPINN().to(self.device)
         
@@ -82,9 +83,10 @@ class FVMPINNTrainer:
     def get_normalized_t(self, t):
         return (t - self.t_min) / (self.t_max - self.t_min)
 
-    def predict(self, norm_t, norm_coords):
+    def predict(self, norm_t, norm_coords, norm_bc):
         t_expanded = norm_t.expand(norm_coords.size(0), 1)
-        inputs = torch.cat([t_expanded, norm_coords], dim=1)
+        bc_expanded = norm_bc.expand(norm_coords.size(0), 3)
+        inputs = torch.cat([t_expanded, norm_coords, bc_expanded], dim=1)
         return self.pinn(inputs)
 
     def compute_physics_loss(self, t_val, dt):
@@ -92,8 +94,11 @@ class FVMPINNTrainer:
         t_next = t_val + dt
         norm_t_next = self.get_normalized_t(t_next.unsqueeze(0))
         
-        wl_curr, u_curr, v_curr = self.predict(norm_t_curr, self.norm_coords)
-        wl_next, u_next, v_next = self.predict(norm_t_next, self.norm_coords)
+        bc_curr = self.boundary_forcings[t_val == self.times_seconds][0].unsqueeze(0)
+        # For simplicity in physics loss, we assume bc_curr is constant over dt=1.0
+        
+        wl_curr, u_curr, v_curr = self.predict(norm_t_curr, self.norm_coords, bc_curr)
+        wl_next, u_next, v_next = self.predict(norm_t_next, self.norm_coords, bc_curr)
         
         h_curr = wl_curr - self.fvm.cell_z
         h_next = wl_next - self.fvm.cell_z
@@ -117,15 +122,17 @@ class FVMPINNTrainer:
         true_h = self.true_wl_matrix[t_idx].unsqueeze(1)
         
         norm_t_curr = self.get_normalized_t(t_val.unsqueeze(0))
+        bc_curr = self.boundary_forcings[t_idx].unsqueeze(0)
         
-        wl_curr, u_curr, v_curr = self.predict(norm_t_curr, self.norm_coords)
+        wl_curr, u_curr, v_curr = self.predict(norm_t_curr, self.norm_coords, bc_curr)
         
         data_loss = nn.MSELoss()(wl_curr[self.interior_mask], true_h[self.interior_mask])
         boundary_loss = nn.MSELoss()(wl_curr[self.boundary_mask], true_h[self.boundary_mask])
         
         t_0 = self.times_seconds[0].unsqueeze(0)
         norm_t_0 = self.get_normalized_t(t_0)
-        wl_0, _, _ = self.predict(norm_t_0, self.norm_coords)
+        bc_0 = self.boundary_forcings[0].unsqueeze(0)
+        wl_0, _, _ = self.predict(norm_t_0, self.norm_coords, bc_0)
         ic_loss = nn.MSELoss()(wl_0, self.true_wl_matrix[0].unsqueeze(1))
         
         pde_loss = self.compute_physics_loss(t_val, dt=1.0)

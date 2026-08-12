@@ -90,12 +90,28 @@ def main():
         device=device
     )
     
+    print("Loading Boundary Conditions from CSV...")
+    bc_df = pd.read_csv('/kaggle/input/boundary_conditions.csv')
+    
+    # Interpolate BCs to match the exact times_seconds from NetCDF
+    from scipy.interpolate import interp1d
+    bc_interp = interp1d(bc_df['Time_s'].values, 
+                         bc_df[['H_ocean', 'Q_garonne', 'Q_dordogne']].values, 
+                         axis=0, kind='linear', fill_value="extrapolate")
+    bc_matrix = bc_interp(times_seconds)
+    
+    # Normalize Boundary Conditions
+    bc_mean = np.mean(bc_matrix, axis=0)
+    bc_std = np.std(bc_matrix, axis=0) + 1e-6
+    bc_matrix_norm = (bc_matrix - bc_mean) / bc_std
+    
     trainer = FVMPINNTrainer(
         fvm_engine=fvm_model,
         cell_coords_m=torch.tensor(cell_coords_m, dtype=torch.float32, device=device),
         true_wl_matrix=true_wl_matrix,
         times_seconds=times_seconds,
-        boundary_mask=boundary_mask_t
+        boundary_mask=boundary_mask_t,
+        boundary_forcings=bc_matrix_norm
     )
     
     os.makedirs('/kaggle/working/outputs', exist_ok=True)
@@ -156,9 +172,9 @@ def main():
     loss_history_phys = []
     
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
-        num_epochs = 3
+        num_epochs = 1
     else:
-        num_epochs = 6
+        num_epochs = 1
         
     total_t_steps = len(t_train_array)
     
@@ -233,7 +249,9 @@ def main():
                 'coords_mean': trainer.coords_mean.cpu().numpy(),
                 'coords_std': trainer.coords_std.cpu().numpy(),
                 'epoch': epoch,
-                'loss': best_loss
+                'loss': best_loss,
+                'bc_mean': bc_mean,
+                'bc_std': bc_std
             }
             torch.save(checkpoint, '/kaggle/working/outputs/fvm_pinn_model_best.pth')
             print(f"  -> Saved new best model checkpoint! (Data Loss: {best_loss:.4f})")
@@ -244,6 +262,8 @@ def main():
         't_max': trainer.t_max.item(),
         'coords_mean': trainer.coords_mean.cpu().numpy(),
         'coords_std': trainer.coords_std.cpu().numpy(),
+        'bc_mean': bc_mean,
+        'bc_std': bc_std,
         'epoch': num_epochs
     }
     torch.save(final_checkpoint, '/kaggle/working/outputs/fvm_pinn_model_final.pth')
@@ -274,8 +294,9 @@ def main():
             norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
             node_coords_m = cell_coords_m[nodes_to_plot]
             norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
+            norm_bc = torch.tensor(bc_matrix_norm[t_idx:t_idx+1], dtype=torch.float32, device=device)
             
-            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c)
+            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c, norm_bc)
             pred_wl[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
             
     fig, axes = plt.subplots(5, 1, figsize=(15, 20), dpi=300, sharex=True)
