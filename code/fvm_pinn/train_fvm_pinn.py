@@ -166,9 +166,12 @@ def main():
     t_train_array = t_train_array[t_train_array <= times_seconds[-1]]
     
     true_wl_interp = interp_func(t_train_array)
+    bc_matrix_interp = bc_interp(t_train_array)
+    bc_matrix_norm_interp = (bc_matrix_interp - bc_mean) / bc_std
     
     trainer.times_seconds = torch.tensor(t_train_array, dtype=torch.float32, device=device)
     trainer.true_wl_matrix = torch.tensor(true_wl_interp, dtype=torch.float32, device=device)
+    trainer.boundary_forcings = torch.tensor(bc_matrix_norm_interp, dtype=torch.float32, device=device)
     
     loss_history_data = []
     loss_history_phys = []
