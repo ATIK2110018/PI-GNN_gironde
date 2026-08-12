@@ -199,8 +199,8 @@ def main():
         window_size = int(min(2000 + (epoch - 1) * (total_t_steps / 20), total_t_steps))
         valid_t_indices = np.arange(window_size)
         
-        # Option 2: Fast Epochs. We only sample 500 steps per epoch!
-        steps_per_epoch = 500
+        # Option 2: Fast Epochs, but with enough steps to actually digest the data
+        steps_per_epoch = 3000
         t_indices = np.random.choice(valid_t_indices, size=min(steps_per_epoch, window_size), replace=False)
         
         current_steps = len(t_indices)
