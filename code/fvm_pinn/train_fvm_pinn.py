@@ -100,7 +100,7 @@ def main():
     bc_interp = interp1d(bc_df['Time_s'].values, 
                          bc_df[['H_ocean', 'Q_garonne', 'Q_dordogne']].values, 
                          axis=0, kind='linear', fill_value="extrapolate")
-    bc_matrix = bc_interp(times_seconds)
+    bc_matrix = bc_interp(np.array(times_seconds))
     
     # Normalize Boundary Conditions
     bc_mean = np.mean(bc_matrix, axis=0)
