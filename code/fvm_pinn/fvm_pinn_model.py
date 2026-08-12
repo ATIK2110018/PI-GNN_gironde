@@ -13,7 +13,8 @@ class FourierFeatures(nn.Module):
         self.out_features = out_features
         B_t = torch.randn(1, out_features // 2) * sigma_t
         B_s = torch.randn(2, out_features // 2) * sigma_s
-        self.B = nn.Parameter(torch.cat([B_t, B_s], dim=0), requires_grad=False)
+        B_bc = torch.randn(3, out_features // 2) * sigma_s
+        self.B = nn.Parameter(torch.cat([B_t, B_s, B_bc], dim=0), requires_grad=False)
         
     def forward(self, x):
         x_proj = 2.0 * np.pi * x @ self.B
