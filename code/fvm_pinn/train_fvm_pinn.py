@@ -179,7 +179,7 @@ def main():
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
         num_epochs = 5
     else:
-        num_epochs = 100
+        num_epochs = 50
         
     total_t_steps = len(t_train_array)
     
