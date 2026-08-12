@@ -120,17 +120,15 @@ class FVMPINNTrainer:
         
         wl_curr, u_curr, v_curr = self.predict(norm_t_curr, self.norm_coords)
         
-        loss_data_boundary = nn.MSELoss()(wl_curr[self.boundary_mask], true_h[self.boundary_mask])
-        loss_data_interior = nn.MSELoss()(wl_curr[self.interior_mask], true_h[self.interior_mask])
+        data_loss = nn.MSELoss()(wl_curr[self.interior_mask], true_h[self.interior_mask])
+        boundary_loss = nn.MSELoss()(wl_curr[self.boundary_mask], true_h[self.boundary_mask])
+        pde_loss = self.compute_physics_loss(t_val, dt=1.0)
         
-        data_loss = 10.0 * loss_data_interior + 30.0 * loss_data_boundary
-        
-        phys_loss = self.compute_physics_loss(t_val, dt=1.0)
-        
-        total_loss = data_loss + phys_weight * phys_loss
+        total_loss = 10.0 * data_loss + 30.0 * boundary_loss + phys_weight * pde_loss
         total_loss.backward()
         
         torch.nn.utils.clip_grad_norm_(self.pinn.parameters(), 1.0)
         self.optimizer.step()
         
-        return loss_data_interior.item(), loss_data_boundary.item(), phys_loss.item()
+        return data_loss.item(), boundary_loss.item(), pde_loss.item()
+
