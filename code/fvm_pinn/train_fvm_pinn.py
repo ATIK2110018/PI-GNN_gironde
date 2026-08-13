@@ -62,7 +62,7 @@ def main():
     times_seconds = ds.variables['time'][:]
     ds.close()
     
-    FAST_DEBUG_MODE = False
+    FAST_DEBUG_MODE = True
     
     if FAST_DEBUG_MODE:
         print("\n!!! FAST DEBUG MODE ENABLED !!!")
@@ -127,7 +127,7 @@ def main():
         true_wl_matrix=true_wl_matrix,
         times_seconds=times_seconds,
         boundary_mask=boundary_mask_t,
-        boundary_forcings=bc_matrix_norm
+        bc_matrix_norm=bc_matrix_norm
     )
     
     os.makedirs('/kaggle/working/outputs', exist_ok=True)
@@ -142,6 +142,15 @@ def main():
     
     import matplotlib.tri as tri
     triangulation = tri.Triangulation(cell_coords_m[:, 0], cell_coords_m[:, 1])
+    
+    # Mask out large false triangles (convex hull artifacts)
+    x_tri = cell_coords_m[triangulation.triangles, 0]
+    y_tri = cell_coords_m[triangulation.triangles, 1]
+    edge1 = np.sqrt((x_tri[:, 0] - x_tri[:, 1])**2 + (y_tri[:, 0] - y_tri[:, 1])**2)
+    edge2 = np.sqrt((x_tri[:, 1] - x_tri[:, 2])**2 + (y_tri[:, 1] - y_tri[:, 2])**2)
+    edge3 = np.sqrt((x_tri[:, 2] - x_tri[:, 0])**2 + (y_tri[:, 2] - y_tri[:, 0])**2)
+    max_edge = np.max(np.column_stack([edge1, edge2, edge3]), axis=1)
+    triangulation.set_mask(max_edge > 2500.0)
     
     fig, axes = plt.subplots(1, 2, figsize=(18, 7), dpi=300)
     
@@ -203,13 +212,15 @@ def main():
     trainer.true_wl_matrix = torch.tensor(true_wl_train, dtype=torch.float32, device=device)
     trainer.true_ucx_matrix = torch.tensor(true_ucx_train, dtype=torch.float32, device=device)
     trainer.true_ucy_matrix = torch.tensor(true_ucy_train, dtype=torch.float32, device=device)
-    trainer.boundary_forcings = torch.tensor(bc_norm_train, dtype=torch.float32, device=device)
+    # Store FULL interp BC array so get_lagged_bc works for both train and test periods
+    trainer.bc_matrix_norm = torch.tensor(bc_matrix_norm_interp, dtype=torch.float32, device=device)
+    t0_interp = t_all_array[0]  # for mapping original times to interp indices
     
     loss_history_data = []
     loss_history_phys = []
     
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
-        num_epochs = 5
+        num_epochs = 1
     else:
         num_epochs = 60
         
@@ -229,7 +240,8 @@ def main():
         
         # Expand window slightly every epoch so it reaches the full month around epoch 20
         window_size = int(min(2000 + (epoch - 1) * (total_t_steps / 20), total_t_steps))
-        valid_t_indices = np.arange(window_size)
+        from fvm_pinn_model import MIN_T_IDX
+        valid_t_indices = np.arange(max(MIN_T_IDX, 360), window_size)
         
         # Option 2: Fast Epochs, but with enough steps to actually digest the data
         steps_per_epoch = 3000
@@ -275,8 +287,6 @@ def main():
             best_loss = avg_int
             checkpoint = {
                 'model_state_dict': trainer.pinn.state_dict(),
-                't_min': trainer.t_min.item(),
-                't_max': trainer.t_max.item(),
                 'coords_mean': trainer.coords_mean.cpu().numpy(),
                 'coords_std': trainer.coords_std.cpu().numpy(),
                 'z_mean': trainer.z_mean.item(),
@@ -291,8 +301,6 @@ def main():
             
     final_checkpoint = {
         'model_state_dict': trainer.pinn.state_dict(),
-        't_min': trainer.t_min.item(),
-        't_max': trainer.t_max.item(),
         'coords_mean': trainer.coords_mean.cpu().numpy(),
         'coords_std': trainer.coords_std.cpu().numpy(),
         'z_mean': trainer.z_mean.item(),
@@ -324,15 +332,15 @@ def main():
     
     pred_wl = np.zeros((len(times_seconds), len(nodes_to_plot)))
     
-    node_z = trainer.norm_z[nodes_to_plot]  # normalized bathymetry at selected nodes
+    node_z = trainer.norm_z[nodes_to_plot]
+    node_coords_m = cell_coords_m[nodes_to_plot]
+    norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
     with torch.no_grad():
         for t_idx, t_val in enumerate(times_seconds):
-            norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
-            node_coords_m = cell_coords_m[nodes_to_plot]
-            norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
-            norm_bc = torch.tensor(bc_matrix_norm[t_idx:t_idx+1], dtype=torch.float32, device=device)
-            
-            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c, norm_bc, norm_z=node_z)
+            interp_idx = int(round((t_val - t0_interp) / 60.0))
+            interp_idx = min(max(interp_idx, 0), len(t_all_array) - 1)
+            lagged_bc = trainer.get_lagged_bc(interp_idx)
+            wl_pred_tensor, _, _ = trainer.predict(norm_c, lagged_bc, norm_z=node_z)
             pred_wl[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
             
     fig, axes = plt.subplots(5, 1, figsize=(15, 20), dpi=300, sharex=True)
@@ -379,14 +387,14 @@ def main():
         
     pred_wl_obs = np.zeros((len(times_seconds), len(obs_nodes)))
     
-    obs_z = trainer.norm_z[obs_nodes]  # normalized bathymetry at obs stations
+    obs_z = trainer.norm_z[obs_nodes]
+    obs_coords_norm = (torch.tensor(cell_coords_m[obs_nodes], dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
     with torch.no_grad():
         for t_idx, t_val in enumerate(times_seconds):
-            norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
-            node_coords_m = cell_coords_m[obs_nodes]
-            norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
-            norm_bc = torch.tensor(bc_matrix_norm[t_idx:t_idx+1], dtype=torch.float32, device=device)
-            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c, norm_bc, norm_z=obs_z)
+            interp_idx = int(round((t_val - t0_interp) / 60.0))
+            interp_idx = min(max(interp_idx, 0), len(t_all_array) - 1)
+            lagged_bc = trainer.get_lagged_bc(interp_idx)
+            wl_pred_tensor, _, _ = trainer.predict(obs_coords_norm, lagged_bc, norm_z=obs_z)
             pred_wl_obs[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
             
     fig, axes = plt.subplots(4, 2, figsize=(20, 16), dpi=300, sharex=True)
@@ -417,9 +425,10 @@ def main():
     final_t_val = times_seconds[-1]
     
     with torch.no_grad():
-        norm_t_final = trainer.get_normalized_t(torch.tensor([final_t_val], dtype=torch.float32, device=device))
-        norm_bc_final = torch.tensor(bc_matrix_norm[final_t_idx:final_t_idx+1], dtype=torch.float32, device=device)
-        wl_pred_final_tensor, u_pred_final_tensor, v_pred_final_tensor = trainer.predict(norm_t_final, trainer.norm_coords, norm_bc_final)
+        final_interp_idx = int(round((final_t_val - t0_interp) / 60.0))
+        final_interp_idx = min(max(final_interp_idx, 0), len(t_all_array) - 1)
+        lagged_bc_final = trainer.get_lagged_bc(final_interp_idx)
+        wl_pred_final_tensor, u_pred_final_tensor, v_pred_final_tensor = trainer.predict(trainer.norm_coords, lagged_bc_final)
         wl_pred_final = wl_pred_final_tensor.cpu().numpy().flatten()
         u_pred_final = u_pred_final_tensor.cpu().numpy().flatten()
         v_pred_final = v_pred_final_tensor.cpu().numpy().flatten()
@@ -496,9 +505,10 @@ def main():
         t_hr = t_val / 3600.0
         
         with torch.no_grad():
-            norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
-            norm_bc_anim = torch.tensor(bc_matrix_norm[t_idx:t_idx+1], dtype=torch.float32, device=device)
-            wl_pred_tensor, _, _ = trainer.predict(norm_t, trainer.norm_coords, norm_bc_anim)
+            anim_interp_idx = int(round((t_val - t0_interp) / 60.0))
+            anim_interp_idx = min(max(anim_interp_idx, 0), len(t_all_array) - 1)
+            lagged_bc_anim = trainer.get_lagged_bc(anim_interp_idx)
+            wl_pred_tensor, _, _ = trainer.predict(trainer.norm_coords, lagged_bc_anim)
             wl_pred = wl_pred_tensor.cpu().numpy().flatten()
             
         tcf = ax_anim.tricontourf(triangulation, wl_pred, levels=levels, cmap='GnBu', extend='both')
@@ -523,14 +533,13 @@ def main():
     val_node_z = trainer.norm_z[val_nodes]
     pred_wl_val = np.zeros((len(t_test_array), len(val_nodes)))
     
+    val_coords_norm = (torch.tensor(cell_coords_m[val_nodes], dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
     with torch.no_grad():
         for t_idx, t_val in enumerate(t_test_array):
-            norm_t = trainer.get_normalized_t(torch.tensor([t_val], dtype=torch.float32, device=device))
-            node_coords_m = cell_coords_m[val_nodes]
-            norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
-            # Use test BC data (unseen during training)
-            norm_bc = torch.tensor(bc_norm_test[t_idx:t_idx+1], dtype=torch.float32, device=device)
-            wl_pred_tensor, _, _ = trainer.predict(norm_t, norm_c, norm_bc, norm_z=val_node_z)
+            # Map test time to full interp array index
+            test_interp_idx = split_idx + t_idx
+            lagged_bc = trainer.get_lagged_bc(test_interp_idx)
+            wl_pred_tensor, _, _ = trainer.predict(val_coords_norm, lagged_bc, norm_z=val_node_z)
             pred_wl_val[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
     
     test_times_hr = t_test_array / 3600.0
