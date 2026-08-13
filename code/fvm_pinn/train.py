@@ -245,8 +245,8 @@ def main():
         from fvm_pinn_model import MIN_T_IDX
         valid_t_indices = np.arange(MIN_T_IDX, window_size)
         
-        # GNN processes ALL nodes per time step — use 300 time steps per epoch
-        steps_per_epoch = 300
+        # GNN processes ALL nodes per time step — use 1000 time steps per epoch
+        steps_per_epoch = 1000
         t_indices = np.random.choice(valid_t_indices, size=min(steps_per_epoch, len(valid_t_indices)), replace=False)
         
         current_steps = len(t_indices)
