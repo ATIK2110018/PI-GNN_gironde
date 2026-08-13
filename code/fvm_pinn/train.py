@@ -251,12 +251,12 @@ def main():
         
         current_steps = len(t_indices)
         
-        if epoch <= 10:
+        if epoch <= 5:
             current_phys_weight = 0.0
             print(f"  -> Epoch {epoch}: Purely Data-Driven Pre-training (Physics Weight = 0.0) | Window: {window_size} mins")
-        elif epoch <= 30:
-            # Gradual ramp: 0.5 at epoch 11 → 2.0 at epoch 30
-            current_phys_weight = 0.5 + 1.5 * (epoch - 11) / (30 - 11)
+        elif epoch <= 15:
+            # Gradual ramp: 0.5 at epoch 6 → 2.0 at epoch 15
+            current_phys_weight = 0.5 + 1.5 * (epoch - 6) / (15 - 6)
             print(f"  -> Epoch {epoch}: Physics Ramp-Up (Physics Weight = {current_phys_weight:.2f}) | Window: {window_size} mins")
         else:
             current_phys_weight = 2.0
