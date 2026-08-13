@@ -156,10 +156,12 @@ class FVMPINNTrainer:
         self._precompute_bed_slopes()
 
         # ---- Build Model ----
+        # NOTE: nn.DataParallel is NOT compatible with GNNs because DataParallel
+        # splits inputs on dim-0. This causes src/dst edge indices to go out of
+        # bounds on each GPU's partial node tensor. GNNs must run on one GPU.
         self.gnn = HydroGNN(hidden_dim=HIDDEN_DIM, n_layers=N_GNN_LAYERS).to(self.device)
         if torch.cuda.device_count() > 1:
-            print(f"Using {torch.cuda.device_count()} GPUs for DataParallel!")
-            self.gnn = nn.DataParallel(self.gnn)
+            print(f"Note: {torch.cuda.device_count()} GPUs available. Running GNN on primary GPU (DataParallel incompatible with graph indexing).")
 
         self.optimizer = torch.optim.Adam(self.gnn.parameters(), lr=5e-4, weight_decay=1e-5)
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.97)
