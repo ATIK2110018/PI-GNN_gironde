@@ -351,8 +351,9 @@ def main():
         pred_series = pred_wl[:, i]
         
         rmse = np.sqrt(np.mean((true_series - pred_series)**2))
-        nse = 1 - np.sum((true_series - pred_series)**2) / np.sum((true_series - np.mean(true_series))**2)
-        r2 = np.corrcoef(true_series, pred_series)[0, 1]**2
+        variance = np.sum((true_series - np.mean(true_series))**2)
+        nse = 1 - np.sum((true_series - pred_series)**2) / (variance + 1e-8)
+        r2 = np.corrcoef(true_series, pred_series)[0, 1]**2 if variance > 1e-6 else 0.0
         
         ax.plot(times_hr, true_series, 'k-', label='True FVM Data', linewidth=2, alpha=0.7)
         ax.plot(times_hr, pred_series, 'r--', label='PINN Prediction', linewidth=2)
@@ -406,8 +407,9 @@ def main():
         pred_series = pred_wl_obs[:, i]
         
         rmse = np.sqrt(np.mean((true_series - pred_series)**2))
-        nse = 1 - np.sum((true_series - pred_series)**2) / np.sum((true_series - np.mean(true_series))**2)
-        r2 = np.corrcoef(true_series, pred_series)[0, 1]**2
+        variance = np.sum((true_series - np.mean(true_series))**2)
+        nse = 1 - np.sum((true_series - pred_series)**2) / (variance + 1e-8)
+        r2 = np.corrcoef(true_series, pred_series)[0, 1]**2 if variance > 1e-6 else 0.0
         
         ax.plot(times_hr, true_series, 'k-', label='True FVM Data', linewidth=2, alpha=0.7)
         ax.plot(times_hr, pred_series, 'r--', label='PINN Prediction', linewidth=2)
