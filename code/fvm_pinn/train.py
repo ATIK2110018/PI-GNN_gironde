@@ -224,7 +224,7 @@ def main():
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
         num_epochs = 3
     else:
-        num_epochs = 20
+        num_epochs = 30
         
     total_t_steps = len(t_train_array)
     
@@ -240,8 +240,8 @@ def main():
         epoch_ic_loss = 0.0
         epoch_phys_loss = 0.0
         
-        # Expand window slightly every epoch so it reaches the full month around epoch 20
-        window_size = int(min(2000 + (epoch - 1) * (total_t_steps / 20), total_t_steps))
+        # Expand window so it reaches the full month around epoch 17 (end of ramp-up)
+        window_size = int(min(2000 + (epoch - 1) * (total_t_steps / 17), total_t_steps))
         from fvm_pinn_model import MIN_T_IDX
         valid_t_indices = np.arange(MIN_T_IDX, window_size)
         
@@ -251,12 +251,12 @@ def main():
         
         current_steps = len(t_indices)
         
-        if epoch <= 5:
+        if epoch <= 7:
             current_phys_weight = 0.0
             print(f"  -> Epoch {epoch}: Purely Data-Driven Pre-training (Physics Weight = 0.0) | Window: {window_size} mins")
-        elif epoch <= 15:
-            # Gradual ramp: 0.5 at epoch 6 → 2.0 at epoch 15
-            current_phys_weight = 0.5 + 1.5 * (epoch - 6) / (15 - 6)
+        elif epoch <= 17:
+            # Gradual ramp: 0.5 at epoch 8 → 2.0 at epoch 17
+            current_phys_weight = 0.5 + 1.5 * (epoch - 8) / (17 - 8)
             print(f"  -> Epoch {epoch}: Physics Ramp-Up (Physics Weight = {current_phys_weight:.2f}) | Window: {window_size} mins")
         else:
             current_phys_weight = 2.0
@@ -285,7 +285,11 @@ def main():
         
         trainer.scheduler.step()
         
-        if avg_int < best_loss:
+        # Reset best_loss at epoch 20 so it only tracks physics-constrained performance
+        if epoch == 20:
+            best_loss = float('inf')
+            
+        if avg_int < best_loss and epoch >= 20:
             best_loss = avg_int
             checkpoint = {
                 'model_state_dict': trainer.gnn.state_dict(),
