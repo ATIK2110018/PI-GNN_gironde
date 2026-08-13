@@ -4,27 +4,24 @@ import numpy as np
 from numerical_model import GPUHydrodynamicModel
 
 # --- Lag Configuration ---
-# H_ocean:    current + 6 hourly lags = 7 features (captures ~6h tidal propagation)
+# H_ocean:    current + 13 hourly lags = 14 features (captures one full 12.4h M2 tidal cycle)
 # Q_garonne:  current + 3 hourly lags = 4 features (river discharge changes slowly)
 # Q_dordogne: current + 3 hourly lags = 4 features
-N_H_LAGS = 7
+N_H_LAGS = 14
 N_QG_LAGS = 4
 N_QD_LAGS = 4
-N_BC_FEATURES = N_H_LAGS + N_QG_LAGS + N_QD_LAGS  # 15
+N_BC_FEATURES = N_H_LAGS + N_QG_LAGS + N_QD_LAGS  # 22
 N_SPATIAL = 3   # x, y, z
-N_INPUTS = N_SPATIAL + N_BC_FEATURES  # 18
+N_INPUTS = N_SPATIAL + N_BC_FEATURES  # 25
 LAG_STEP = 60   # 60 time steps = 1 hour (data at 1-min intervals)
-MIN_T_IDX = (N_H_LAGS - 1) * LAG_STEP  # 360 = need 6 hours of history
+MIN_T_IDX = (N_H_LAGS - 1) * LAG_STEP  # 780 = need 13 hours of history
 
 
-class FourierFeatures(nn.Module):
-    """Random Fourier Features with separate frequency scales for spatial vs BC inputs."""
-    def __init__(self, in_features=N_INPUTS, out_features=256, sigma_spatial=1.0, sigma_bc=2.0):
+class SpatialFourierFeatures(nn.Module):
+    """Random Fourier Features for spatial coordinates only."""
+    def __init__(self, in_features=3, out_features=128, sigma=1.0):
         super().__init__()
-        n_half = out_features // 2
-        B_spatial = torch.randn(N_SPATIAL, n_half) * sigma_spatial
-        B_bc = torch.randn(N_BC_FEATURES, n_half) * sigma_bc
-        self.B = nn.Parameter(torch.cat([B_spatial, B_bc], dim=0), requires_grad=False)
+        self.B = nn.Parameter(torch.randn(in_features, out_features // 2) * sigma, requires_grad=False)
 
     def forward(self, x):
         x_proj = 2.0 * np.pi * x @ self.B
@@ -33,29 +30,45 @@ class FourierFeatures(nn.Module):
 
 class HydroPINN(nn.Module):
     """
-    Time-Independent Parametric Surrogate Model.
-
-    Input:  [x, y, z, H(t), H(t-1h), ..., H(t-6h), Qg(t), ..., Qg(t-3h), Qd(t), ..., Qd(t-3h)]
-    Output: [eta, u, v]
-
-    NO absolute time input => generalizes to ANY time period.
+    Time-Independent Parametric Surrogate Model (DeepONet Architecture).
     """
     def __init__(self):
         super(HydroPINN, self).__init__()
-        self.fourier = FourierFeatures(in_features=N_INPUTS, out_features=256)
-        self.net = nn.Sequential(
-            nn.Linear(256, 512), nn.SiLU(),
-            nn.Linear(512, 512), nn.SiLU(),
-            nn.Linear(512, 512), nn.SiLU(),
-            nn.Linear(512, 512), nn.SiLU(),
+        # 1. Spatial Trunk (processes x, y, z)
+        self.spatial_enc = SpatialFourierFeatures(in_features=N_SPATIAL, out_features=128, sigma=1.0)
+        self.trunk_net = nn.Sequential(
+            nn.Linear(128, 256), nn.SiLU(),
+            nn.Linear(256, 256), nn.SiLU(),
+            nn.Linear(256, 256), nn.SiLU()
+        )
+        
+        # 2. Parametric Branch (processes Boundary Conditions)
+        self.branch_net = nn.Sequential(
+            nn.Linear(N_BC_FEATURES, 128), nn.SiLU(),
+            nn.Linear(128, 256), nn.SiLU(),
+            nn.Linear(256, 256), nn.SiLU()
+        )
+        
+        # 3. Decoder (combines trunk and branch)
+        self.decoder = nn.Sequential(
+            nn.Linear(256 + 256, 512), nn.SiLU(),
             nn.Linear(512, 512), nn.SiLU(),
             nn.Linear(512, 512), nn.SiLU(),
             nn.Linear(512, 3)
         )
 
     def forward(self, inputs):
-        features = self.fourier(inputs)
-        out = self.net(features)
+        # inputs: [N, N_SPATIAL + N_BC_FEATURES]
+        coords = inputs[:, :N_SPATIAL]
+        bcs = inputs[:, N_SPATIAL:]
+        
+        spatial_features = self.spatial_enc(coords)
+        trunk_out = self.trunk_net(spatial_features)
+        
+        branch_out = self.branch_net(bcs)
+        
+        combined = torch.cat([trunk_out, branch_out], dim=-1)
+        out = self.decoder(combined)
         return out[:, 0:1], out[:, 1:2], out[:, 2:3]
 
 
@@ -130,8 +143,8 @@ class FVMPINNTrainer:
     # ----- Lagged BC Construction -----
     def get_lagged_bc(self, t_idx):
         """
-        Build the 15-element lagged boundary condition vector for time index t_idx.
-        Returns tensor of shape [15] on self.device.
+        Build the 22-element lagged boundary condition vector for time index t_idx.
+        Returns tensor of shape [22] on self.device.
         """
         h_lags = []
         for k in range(N_H_LAGS):
