@@ -15,8 +15,8 @@ N_SPATIAL = 3   # x_norm, y_norm, z_norm
 LAG_STEP = 60   # 1 hour = 60 one-minute steps
 MIN_T_IDX = (N_H_LAGS - 1) * LAG_STEP  # 780 steps = 13 hours of history
 
-HIDDEN_DIM = 256
-N_GNN_LAYERS = 6
+HIDDEN_DIM = 128
+N_GNN_LAYERS = 4
 
 
 def _mlp(in_dim, hidden_dim, out_dim, n_hidden=2):
@@ -165,6 +165,9 @@ class FVMPINNTrainer:
 
         self.optimizer = torch.optim.Adam(self.gnn.parameters(), lr=5e-4, weight_decay=1e-5)
         self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.97)
+        self.scaler = torch.amp.GradScaler('cuda')  # Mixed precision scaler
+        self._step_count = 0  # for IC loss scheduling
+        self._ic_target = None  # cached IC reference, refreshed every 10 steps
 
     def _build_graph(self):
         """Pre-compute edge indices and normalized edge features for message passing."""
@@ -307,43 +310,54 @@ class FVMPINNTrainer:
     # ----- Training Step -----
     def train_step(self, t_idx, phys_weight=2.0):
         self.optimizer.zero_grad()
+        self._step_count += 1
 
-        bc_curr = self.get_lagged_bc(t_idx)
-        eta_t, u_t, v_t = self._forward_all(bc_curr)
+        with torch.amp.autocast('cuda'):
+            bc_curr = self.get_lagged_bc(t_idx)
+            eta_t, u_t, v_t = self._forward_all(bc_curr)
 
-        true_h = self.true_wl_matrix[t_idx].unsqueeze(1)   # [N, 1]
-        true_u = self.true_ucx_matrix[t_idx].unsqueeze(1)
-        true_v = self.true_ucy_matrix[t_idx].unsqueeze(1)
+            true_h = self.true_wl_matrix[t_idx].unsqueeze(1)   # [N, 1]
+            true_u = self.true_ucx_matrix[t_idx].unsqueeze(1)
+            true_v = self.true_ucy_matrix[t_idx].unsqueeze(1)
 
-        # Data fidelity (interior + boundary separately weighted)
-        data_loss = nn.MSELoss()(eta_t[self.interior_mask], true_h[self.interior_mask])
-        bc_loss = nn.MSELoss()(eta_t[self.boundary_mask], true_h[self.boundary_mask])
-        vel_loss = (nn.MSELoss()(u_t[self.interior_mask], true_u[self.interior_mask]) +
-                    nn.MSELoss()(v_t[self.interior_mask], true_v[self.interior_mask]))
+            # Data fidelity (interior + boundary separately weighted)
+            data_loss = nn.MSELoss()(eta_t[self.interior_mask], true_h[self.interior_mask])
+            bc_loss   = nn.MSELoss()(eta_t[self.boundary_mask], true_h[self.boundary_mask])
+            vel_loss  = (nn.MSELoss()(u_t[self.interior_mask], true_u[self.interior_mask]) +
+                         nn.MSELoss()(v_t[self.interior_mask], true_v[self.interior_mask]))
 
-        # IC loss at t=0
-        bc_0 = self.get_lagged_bc(0)
-        eta_0, _, _ = self._forward_all(bc_0)
-        ic_loss = nn.MSELoss()(eta_0, self.true_wl_matrix[0].unsqueeze(1))
+            # IC loss: refresh target every 10 steps (saves one full forward pass per step)
+            if self._ic_target is None or self._step_count % 10 == 1:
+                bc_0 = self.get_lagged_bc(0)
+                with torch.no_grad():
+                    eta_0_ref, _, _ = self._forward_all(bc_0)
+                self._ic_target = eta_0_ref.detach().float()
 
-        # Physics loss
-        if phys_weight > 0.0 and t_idx > 0:
-            with torch.no_grad():
-                bc_prev = self.get_lagged_bc(t_idx - 1)
-                eta_tm1, _, _ = self._forward_all(bc_prev)
-            pde_loss = self.compute_physics_loss(eta_t, u_t, v_t, eta_tm1.detach())
-        else:
-            pde_loss = torch.tensor(0.0, device=self.device)
+            # Reuse cached IC target
+            bc_0 = self.get_lagged_bc(0)
+            eta_0, _, _ = self._forward_all(bc_0)
+            ic_loss = nn.MSELoss()(eta_0.float(), self._ic_target)
 
-        total_loss = (10.0 * data_loss +
-                      30.0 * bc_loss +
-                      5.0  * vel_loss +
-                      20.0 * ic_loss +
-                      phys_weight * pde_loss)
+            # Physics loss
+            if phys_weight > 0.0 and t_idx > 0:
+                with torch.no_grad():
+                    bc_prev = self.get_lagged_bc(t_idx - 1)
+                    eta_tm1, _, _ = self._forward_all(bc_prev)
+                pde_loss = self.compute_physics_loss(eta_t, u_t, v_t, eta_tm1.detach())
+            else:
+                pde_loss = torch.tensor(0.0, device=self.device)
 
-        total_loss.backward()
+            total_loss = (10.0 * data_loss +
+                          30.0 * bc_loss +
+                          5.0  * vel_loss +
+                          20.0 * ic_loss +
+                          phys_weight * pde_loss)
+
+        self.scaler.scale(total_loss).backward()
+        self.scaler.unscale_(self.optimizer)
         torch.nn.utils.clip_grad_norm_(self.gnn.parameters(), 1.0)
-        self.optimizer.step()
+        self.scaler.step(self.optimizer)
+        self.scaler.update()
 
         return data_loss.item(), bc_loss.item(), ic_loss.item(), pde_loss.item()
 
