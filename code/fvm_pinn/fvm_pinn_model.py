@@ -101,7 +101,7 @@ class FVMPINNTrainer:
             self.pinn = nn.DataParallel(self.pinn)
             
         self.optimizer = torch.optim.Adam(self.pinn.parameters(), lr=1e-3, weight_decay=1e-5)
-        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.8)
+        self.scheduler = torch.optim.lr_scheduler.ExponentialLR(self.optimizer, gamma=0.95)
     
     def _precompute_bed_slopes(self):
         """Compute dz/dx and dz/dy at each cell using Green-Gauss gradient reconstruction."""
