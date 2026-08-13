@@ -59,14 +59,14 @@ class GNNLayer(nn.Module):
         # --- Reverse direction: dst → src ---
         msg_rev = self.message_net(torch.cat([h[dst], h[src], edge_feat], dim=-1))
 
-        # Aggregate at destination nodes
-        agg = torch.zeros(N, msg_fwd.size(-1), device=h.device, dtype=h.dtype)
+        # Initialize agg AFTER computing messages so dtype matches autocast precision
+        agg = torch.zeros(N, msg_fwd.size(-1), device=h.device, dtype=msg_fwd.dtype)
         agg.scatter_add_(0, dst.unsqueeze(1).expand_as(msg_fwd), msg_fwd)
         agg.scatter_add_(0, src.unsqueeze(1).expand_as(msg_rev), msg_rev)
 
         # Update with residual connection + LayerNorm
-        h_new = self.update_net(torch.cat([h, agg], dim=-1))
-        return self.norm(h + h_new)
+        h_new = self.update_net(torch.cat([h.to(msg_fwd.dtype), agg], dim=-1))
+        return self.norm(h.to(msg_fwd.dtype) + h_new)
 
 
 class HydroGNN(nn.Module):
