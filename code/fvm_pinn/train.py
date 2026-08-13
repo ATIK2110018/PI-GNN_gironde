@@ -62,7 +62,7 @@ def main():
     times_seconds = ds.variables['time'][:]
     ds.close()
     
-    FAST_DEBUG_MODE = False
+    FAST_DEBUG_MODE = True
     
     if FAST_DEBUG_MODE:
         print("\n!!! FAST DEBUG MODE ENABLED !!!")
@@ -222,7 +222,7 @@ def main():
     loss_history_phys = []
     
     if 'FAST_DEBUG_MODE' in locals() and FAST_DEBUG_MODE:
-        num_epochs = 5
+        num_epochs = 3
     else:
         num_epochs = 50
         
