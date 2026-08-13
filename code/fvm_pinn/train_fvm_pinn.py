@@ -73,6 +73,8 @@ def main():
         
         times_seconds = times_seconds[valid_indices]
         true_wl_matrix = true_wl_matrix[valid_indices, :]
+        true_ucx_matrix = true_ucx_matrix[valid_indices, :]
+        true_ucy_matrix = true_ucy_matrix[valid_indices, :]
     
     x_coords_m = cell_coords[:, 0] * 78700.0
     y_coords_m = cell_coords[:, 1] * 111000.0
