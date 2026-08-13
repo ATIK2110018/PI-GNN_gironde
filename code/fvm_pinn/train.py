@@ -94,7 +94,7 @@ def main():
     dor_mask = get_cells_near_line_dynamic(cell_coords_m, cell_areas_np, p1_dor, p2_dor) & topo_boundary_mask
     
     exact_boundary_mask = port_mask | gar_mask | dor_mask
-    boundary_mask_t = torch.tensor(exact_boundary_mask, device=device)
+    boundary_mask_t = torch.tensor(exact_boundary_mask, dtype=torch.bool, device=device)
     
     fvm_model = GPUHydrodynamicModel(
         cell_coords=cell_coords_m,
@@ -243,7 +243,7 @@ def main():
         # Expand window slightly every epoch so it reaches the full month around epoch 20
         window_size = int(min(2000 + (epoch - 1) * (total_t_steps / 20), total_t_steps))
         from fvm_pinn_model import MIN_T_IDX
-        valid_t_indices = np.arange(max(MIN_T_IDX, 360), window_size)
+        valid_t_indices = np.arange(MIN_T_IDX, window_size)
         
         # GNN processes ALL nodes per time step — use 300 time steps per epoch
         steps_per_epoch = 300
@@ -285,7 +285,7 @@ def main():
         
         trainer.scheduler.step()
         
-        if avg_int < best_loss and current_phys_weight > 0.0:
+        if avg_int < best_loss:
             best_loss = avg_int
             checkpoint = {
                 'model_state_dict': trainer.gnn.state_dict(),

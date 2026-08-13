@@ -261,26 +261,42 @@ class FVMPINNTrainer:
         # Normal flux × edge length
         flux = (hu_face * nx + hv_face * ny) * e_len  # [E, 1]
 
-        # Scatter fluxes to cells (c_L gains, c_R loses)
+        # Scatter fluxes to cells
+        # In FVM convention: the flux leaving c_L is positive, entering c_R is positive
+        # so c_L loses flux and c_R gains flux
         N = eta_t.size(0)
         div = torch.zeros(N, 1, device=self.device)
-        div.scatter_add_(0, self.src.unsqueeze(1), flux)
-        div.scatter_add_(0, self.dst.unsqueeze(1), -flux)
-        div = div / self.fvm.cell_areas  # [N, 1]
+        div.scatter_add_(0, self.src.unsqueeze(1), -flux)   # c_L loses
+        div.scatter_add_(0, self.dst.unsqueeze(1),  flux)   # c_R gains
+        div = div / self.fvm.cell_areas  # [N, 1] → m/s
 
         # Continuity residual: dη/dt + div(h·U) = 0
-        R_mass = deta_dt + div
+        # Note: negative sign because div(hU) = -dη/dt
+        R_mass = deta_dt - div
 
-        # Manning friction source for momentum (x)
+        # Depth-averaged momentum residual (linearised, quasi-steady)
+        # Uses GNN-based surface gradient: Green-Gauss on predicted η
+        eta_face = 0.5 * (eta_t[self.src] + eta_t[self.dst])  # [E, 1]
+        d_eta_dx_flux = eta_face * nx * e_len
+        d_eta_dy_flux = eta_face * ny * e_len
+
+        grad_eta_x = torch.zeros(N, 1, device=self.device)
+        grad_eta_y = torch.zeros(N, 1, device=self.device)
+        grad_eta_x.scatter_add_(0, self.src.unsqueeze(1), d_eta_dx_flux)
+        grad_eta_x.scatter_add_(0, self.dst.unsqueeze(1), -d_eta_dx_flux)
+        grad_eta_y.scatter_add_(0, self.src.unsqueeze(1), d_eta_dy_flux)
+        grad_eta_y.scatter_add_(0, self.dst.unsqueeze(1), -d_eta_dy_flux)
+        grad_eta_x = grad_eta_x / self.fvm.cell_areas
+        grad_eta_y = grad_eta_y / self.fvm.cell_areas
+
+        # Manning friction
         vel_mag = torch.sqrt(u_t**2 + v_t**2 + 1e-8)
         C_f = self.g * (self.manning_n ** 2) / (h ** (1.0/3.0) + 1e-8)
-        dz_dx = self.bed_dz_dx.unsqueeze(1)
-        dz_dy = self.bed_dz_dy.unsqueeze(1)
 
-        # Quasi-steady momentum: g*dη/dx + friction_x ≈ 0
-        # Use bed slope as proxy for dη/dx at steady state
-        R_mom_x = self.g * dz_dx + C_f * u_t * vel_mag / (h + 1e-8)
-        R_mom_y = self.g * dz_dy + C_f * v_t * vel_mag / (h + 1e-8)
+        # x-momentum: g * dη/dx + C_f * u * |U| / h = 0
+        R_mom_x = self.g * grad_eta_x + C_f * u_t * vel_mag / (h + 1e-8)
+        # y-momentum: g * dη/dy + C_f * v * |U| / h = 0
+        R_mom_y = self.g * grad_eta_y + C_f * v_t * vel_mag / (h + 1e-8)
 
         return (torch.mean(R_mass**2) +
                 0.1 * torch.mean(R_mom_x**2) +
