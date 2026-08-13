@@ -247,7 +247,7 @@ def main():
         
         # Option 2: Fast Epochs, but with enough steps to actually digest the data
         steps_per_epoch = 3000
-        t_indices = np.random.choice(valid_t_indices, size=min(steps_per_epoch, window_size), replace=False)
+        t_indices = np.random.choice(valid_t_indices, size=min(steps_per_epoch, len(valid_t_indices)), replace=False)
         
         current_steps = len(t_indices)
         
