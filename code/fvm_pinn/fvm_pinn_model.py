@@ -122,8 +122,9 @@ class FVMPINNTrainer:
         dz_dy.scatter_add_(0, self.fvm.c_R.unsqueeze(1), -flux_y)
         dz_dx = dz_dx / self.fvm.cell_areas
         dz_dy = dz_dy / self.fvm.cell_areas
-        self.bed_dz_dx = dz_dx.squeeze(1).detach()
-        self.bed_dz_dy = dz_dy.squeeze(1).detach()
+        # Clamp extreme slopes from isolated boundary cells
+        self.bed_dz_dx = dz_dx.squeeze(1).clamp(-0.3, 0.3).detach()
+        self.bed_dz_dy = dz_dy.squeeze(1).clamp(-0.3, 0.3).detach()
         print(f"Precomputed bed slopes: dz/dx range [{self.bed_dz_dx.min():.6f}, {self.bed_dz_dx.max():.6f}]")
 
     # ----- Lagged BC Construction -----
