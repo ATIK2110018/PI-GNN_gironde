@@ -245,8 +245,8 @@ def main():
         from fvm_pinn_model import MIN_T_IDX
         valid_t_indices = np.arange(max(MIN_T_IDX, 360), window_size)
         
-        # Option 2: Fast Epochs, but with enough steps to actually digest the data
-        steps_per_epoch = 3000
+        # GNN processes ALL nodes per time step — use 300 time steps per epoch
+        steps_per_epoch = 300
         t_indices = np.random.choice(valid_t_indices, size=min(steps_per_epoch, len(valid_t_indices)), replace=False)
         
         current_steps = len(t_indices)
@@ -288,7 +288,7 @@ def main():
         if avg_int < best_loss and current_phys_weight > 0.0:
             best_loss = avg_int
             checkpoint = {
-                'model_state_dict': trainer.pinn.state_dict(),
+                'model_state_dict': trainer.gnn.state_dict(),
                 'coords_mean': trainer.coords_mean.cpu().numpy(),
                 'coords_std': trainer.coords_std.cpu().numpy(),
                 'z_mean': trainer.z_mean.item(),
@@ -302,7 +302,7 @@ def main():
             print(f"  -> Saved new best model checkpoint! (Data Loss: {best_loss:.4f})")
             
     final_checkpoint = {
-        'model_state_dict': trainer.pinn.state_dict(),
+        'model_state_dict': trainer.gnn.state_dict(),
         'coords_mean': trainer.coords_mean.cpu().numpy(),
         'coords_std': trainer.coords_std.cpu().numpy(),
         'z_mean': trainer.z_mean.item(),
@@ -327,23 +327,20 @@ def main():
     plt.close()
     
     print("Evaluating full timeseries for 5 interior nodes...")
-    trainer.pinn.eval()
-    
+    # GNN predicts all nodes at once — extract subset for plotting
     nodes_to_plot = [1000, 8000, 15000, 22000, 29000]
     times_hr = times_seconds / 3600.0
     
     pred_wl = np.zeros((len(times_seconds), len(nodes_to_plot)))
+    trainer.gnn.eval()
     
-    node_z = trainer.norm_z[nodes_to_plot]
-    node_coords_m = cell_coords_m[nodes_to_plot]
-    norm_c = (torch.tensor(node_coords_m, dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
     with torch.no_grad():
         for t_idx, t_val in enumerate(times_seconds):
             interp_idx = int(round((t_val - t0_interp) / 60.0))
             interp_idx = min(max(interp_idx, 0), len(t_all_array) - 1)
             lagged_bc = trainer.get_lagged_bc(interp_idx)
-            wl_pred_tensor, _, _ = trainer.predict(norm_c, lagged_bc, norm_z=node_z)
-            pred_wl[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
+            wl_all, _, _ = trainer.predict(lagged_bc=lagged_bc)
+            pred_wl[t_idx, :] = wl_all[nodes_to_plot, 0].cpu().numpy()
             
     fig, axes = plt.subplots(5, 1, figsize=(15, 20), dpi=300, sharex=True)
     for i, (node_id, ax) in enumerate(zip(nodes_to_plot, axes)):
@@ -390,15 +387,13 @@ def main():
         
     pred_wl_obs = np.zeros((len(times_seconds), len(obs_nodes)))
     
-    obs_z = trainer.norm_z[obs_nodes]
-    obs_coords_norm = (torch.tensor(cell_coords_m[obs_nodes], dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
     with torch.no_grad():
         for t_idx, t_val in enumerate(times_seconds):
             interp_idx = int(round((t_val - t0_interp) / 60.0))
             interp_idx = min(max(interp_idx, 0), len(t_all_array) - 1)
             lagged_bc = trainer.get_lagged_bc(interp_idx)
-            wl_pred_tensor, _, _ = trainer.predict(obs_coords_norm, lagged_bc, norm_z=obs_z)
-            pred_wl_obs[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
+            wl_all, _, _ = trainer.predict(lagged_bc=lagged_bc)
+            pred_wl_obs[t_idx, :] = wl_all[obs_nodes, 0].cpu().numpy()
             
     fig, axes = plt.subplots(4, 2, figsize=(20, 16), dpi=300, sharex=True)
     axes = axes.flatten()
@@ -432,10 +427,10 @@ def main():
         final_interp_idx = int(round((final_t_val - t0_interp) / 60.0))
         final_interp_idx = min(max(final_interp_idx, 0), len(t_all_array) - 1)
         lagged_bc_final = trainer.get_lagged_bc(final_interp_idx)
-        wl_pred_final_tensor, u_pred_final_tensor, v_pred_final_tensor = trainer.predict(trainer.norm_coords, lagged_bc_final)
-        wl_pred_final = wl_pred_final_tensor.cpu().numpy().flatten()
-        u_pred_final = u_pred_final_tensor.cpu().numpy().flatten()
-        v_pred_final = v_pred_final_tensor.cpu().numpy().flatten()
+        wl_all, u_all, v_all = trainer.predict(lagged_bc=lagged_bc_final)
+        wl_pred_final = wl_all[:, 0].cpu().numpy()
+        u_pred_final = u_all[:, 0].cpu().numpy()
+        v_pred_final = v_all[:, 0].cpu().numpy()
         
     true_wl_final = true_wl_matrix[final_t_idx]
     spatial_error = np.abs(wl_pred_final - true_wl_final)
@@ -512,8 +507,8 @@ def main():
             anim_interp_idx = int(round((t_val - t0_interp) / 60.0))
             anim_interp_idx = min(max(anim_interp_idx, 0), len(t_all_array) - 1)
             lagged_bc_anim = trainer.get_lagged_bc(anim_interp_idx)
-            wl_pred_tensor, _, _ = trainer.predict(trainer.norm_coords, lagged_bc_anim)
-            wl_pred = wl_pred_tensor.cpu().numpy().flatten()
+            wl_all, _, _ = trainer.predict(lagged_bc=lagged_bc_anim)
+            wl_pred = wl_all[:, 0].cpu().numpy()
             
         tcf = ax_anim.tricontourf(triangulation, wl_pred, levels=levels, cmap='GnBu', extend='both')
         ax_anim.set_title(f"FVM-PINN Water Level Simulation | Time: {t_hr:.2f} Hours")
@@ -537,14 +532,12 @@ def main():
     val_node_z = trainer.norm_z[val_nodes]
     pred_wl_val = np.zeros((len(t_test_array), len(val_nodes)))
     
-    val_coords_norm = (torch.tensor(cell_coords_m[val_nodes], dtype=torch.float32, device=device) - trainer.coords_mean) / trainer.coords_std
     with torch.no_grad():
         for t_idx, t_val in enumerate(t_test_array):
-            # Map test time to full interp array index
             test_interp_idx = split_idx + t_idx
             lagged_bc = trainer.get_lagged_bc(test_interp_idx)
-            wl_pred_tensor, _, _ = trainer.predict(val_coords_norm, lagged_bc, norm_z=val_node_z)
-            pred_wl_val[t_idx, :] = wl_pred_tensor.cpu().numpy().flatten()
+            wl_all, _, _ = trainer.predict(lagged_bc=lagged_bc)
+            pred_wl_val[t_idx, :] = wl_all[val_nodes, 0].cpu().numpy()
     
     test_times_hr = t_test_array / 3600.0
     fig, axes = plt.subplots(len(val_nodes), 1, figsize=(15, 4*len(val_nodes)), dpi=300, sharex=True)
