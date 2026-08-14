@@ -1,8 +1,8 @@
-# Gironde Estuary Parametric PINN Surrogate for Tidal Hydrodynamics
+# Gironde Estuary Parametric PI-GNN Surrogate for Tidal Hydrodynamics
 
 ## 1. Project Objective
 
-Build a **parametric Physics-Informed Neural Network (PINN)** surrogate that learns the 2D Shallow Water Equations governing the Gironde estuary from D-Flow FM simulation data. The model takes a **7D input** `[t, x, y, z, H_ocean, Q_garonne, Q_dordogne]` and predicts the full hydrodynamic state `[η, u, v]` (water surface elevation, x-velocity, y-velocity) at any point in space-time, conditioned on dynamic boundary forcing.
+Build a **parametric Physics-Informed Graph Neural Network (PI-GNN)** surrogate that learns the 2D Shallow Water Equations governing the Gironde estuary from D-Flow FM simulation data. The model takes a **7D input** `[t, x, y, z, H_ocean, Q_garonne, Q_dordogne]` and predicts the full hydrodynamic state `[η, u, v]` (water surface elevation, x-velocity, y-velocity) at any point in space-time, conditioned on dynamic boundary forcing.
 
 ## 2. Architecture
 
@@ -10,7 +10,7 @@ Build a **parametric Physics-Informed Neural Network (PINN)** surrogate that lea
 |-----------|-------------|
 | **Input** | 7D: normalized time, spatial coords (x, y), bathymetry (z), boundary conditions (H, Q₁, Q₂) |
 | **Fourier Features** | Random Fourier mapping (σ_t=30, σ_s=1) to overcome spectral bias for tidal oscillations |
-| **Network** | 6-layer MLP (512 units each), SiLU activations |
+| **Network** | 6-layer MLP (512 units each), SiLU activations, message passing over FVM faces |
 | **Output** | 3D: water surface elevation (η), x-velocity (u), y-velocity (v) |
 | **Mesh** | 36,271 unstructured FVM cells, 53,224 internal faces from D-Flow FM |
 
@@ -44,7 +44,7 @@ Bed slopes (`∂z/∂x`, `∂z/∂y`) are precomputed via Green-Gauss gradient r
 | Physics-Informed | 11–60 | 2.0 | Full SWE constraints activated |
 
 - **Curriculum Learning**: Training window expands from 2,000 minutes to full dataset by Epoch 20
-- **Steps per Epoch**: min(3000, window_size) random spacetime samples
+- **Steps per Epoch**: min(1000, window_size) random spacetime samples
 - **Optimizer**: Adam (lr=1e-3, weight_decay=1e-5) with ExponentialLR (γ=0.8)
 - **Gradient Clipping**: max_norm=1.0
 
@@ -79,10 +79,9 @@ Bed slopes (`∂z/∂x`, `∂z/∂y`) are precomputed via Green-Gauss gradient r
 
 ```
 code/fvm_pinn/
-├── train_fvm_pinn.py      # Training + evaluation pipeline (entry point)
-├── fvm_pinn_model.py      # HydroPINN architecture + FVMPINNTrainer
+├── train.py               # Training + evaluation pipeline (entry point)
+├── fvm_pinn_model.py      # HydroPI-GNN architecture + FVMPINNTrainer
 ├── numerical_model.py     # GPU FVM engine (bed slope computation)
-├── riemann_solver.py      # Roe-flux 2D Riemann solver
 ├── data_extractor.py      # Unstructured mesh geometry extraction
 └── requirements.txt       # Python dependencies
 ```
@@ -95,7 +94,7 @@ code/fvm_pinn/
 
 # Cell 2: Train
 %cd /kaggle/working/code/fvm_pinn
-!python train_fvm_pinn.py
+!python train.py
 ```
 
 Requires Kaggle dataset: `atikurr/gironde-hydro-out` (containing `FlowFM_map.nc` and `boundary_conditions.csv`)
