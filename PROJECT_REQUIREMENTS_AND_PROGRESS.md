@@ -90,7 +90,7 @@ code/fvm_pinn/
 
 ```bash
 # Cell 1: Clone
-!git clone https://github.com/ATIK2110018/gironde_PINN.git code
+!git clone https://github.com/ATIK2110018/PI-GNN_gironde.git code
 
 # Cell 2: Train
 %cd /kaggle/working/code/fvm_pinn
