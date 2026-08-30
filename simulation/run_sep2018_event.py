@@ -34,6 +34,9 @@ def prepare_data(excel_path, output_bc_file):
         # This fixes any slight timestamp discrepancies (e.g., 10:01 vs 10:00) that would otherwise misalign rows!
         df['Unified_Time'] = df['Unified_Time'].dt.round('h')
         
+        # Drop duplicates to prevent Scipy interpolation crashes (divide by zero)
+        df = df.drop_duplicates(subset=['Unified_Time'], keep='first')
+        
         # Filter for the event
         mask = (df['Unified_Time'] >= start_date) & (df['Unified_Time'] <= end_date)
         df_filtered = df.loc[mask].copy()
