@@ -37,12 +37,15 @@ def prepare_data(excel_path, output_bc_file):
         # Standardize the time column name for merging
         df_filtered = df_filtered.rename(columns={date_col: 'Unified_Time'})
         
+        # Prefix all other columns with the sheet name so we don't lose the station identity
+        rename_dict = {c: f"{sheet_name}_{c}" for c in df_filtered.columns if c != 'Unified_Time'}
+        df_filtered = df_filtered.rename(columns=rename_dict)
+        
         if unified_df is None:
             unified_df = df_filtered
         else:
-            # Merge on time, avoiding duplicate column names if possible
-            cols_to_use = ['Unified_Time'] + [c for c in df_filtered.columns if c != 'Unified_Time' and c not in unified_df.columns]
-            unified_df = pd.merge(unified_df, df_filtered[cols_to_use], on='Unified_Time', how='outer')
+            # Merge on time
+            unified_df = pd.merge(unified_df, df_filtered, on='Unified_Time', how='outer')
             
     if unified_df is None or unified_df.empty:
         print("Error: No data found for the date range 10-20 September 2018 across any sheets.")
@@ -70,9 +73,14 @@ def prepare_data(excel_path, output_bc_file):
     bc_df['Q_garonne'] = unified_df[gar_col].values
     bc_df['Q_dordogne'] = unified_df[dor_col].values
     
-    # Drop rows with NaN if any exist in the required columns
-    bc_df = bc_df.dropna()
     bc_df = bc_df.sort_values('Time_s')
+    
+    # The user noted timestamps might be slightly corrupted but serial is correct.
+    # Interpolate to fill any NaN gaps that occurred during the outer merge!
+    bc_df = bc_df.interpolate(method='linear').ffill().bfill()
+    
+    # Drop completely corrupted rows just in case
+    bc_df = bc_df.dropna()
     
     bc_df.to_csv(output_bc_file, index=False)
     print(f"Saved boundary conditions to {output_bc_file}")
