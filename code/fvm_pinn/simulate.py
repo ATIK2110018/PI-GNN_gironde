@@ -85,9 +85,11 @@ def main():
     bc_mean = checkpoint['bc_mean']
     bc_std = checkpoint['bc_std']
     
-    # 3. Load BCs
     print(f"Loading Boundary Conditions from {args.bc_file}")
     bc_df = pd.read_csv(args.bc_file)
+    # Strictly enforce uniqueness before interpolation
+    bc_df = bc_df.drop_duplicates(subset=['Time_s'], keep='first')
+    
     bc_interp = interp1d(bc_df['Time_s'].values, 
                          bc_df[['H_ocean', 'Q_garonne', 'Q_dordogne']].values, 
                          axis=0, kind='linear', fill_value="extrapolate")
@@ -97,6 +99,8 @@ def main():
     t_end = bc_df['Time_s'].iloc[-1]
     t_all_array = np.arange(t_start, t_end + 60, 60)
     bc_matrix = bc_interp(t_all_array)
+    # Defense against any lingering NaNs
+    bc_matrix = np.nan_to_num(bc_matrix, nan=0.0)
     bc_matrix_norm = (bc_matrix - bc_mean) / bc_std
     
     # 4. Initialize Trainer (Wrapper)

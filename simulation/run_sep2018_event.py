@@ -97,8 +97,9 @@ def prepare_data(excel_path, output_bc_file):
     # Interpolate to fill any NaN gaps that occurred during the outer merge!
     bc_df = bc_df.interpolate(method='linear').ffill().bfill()
     
-    # Drop completely corrupted rows just in case
-    bc_df = bc_df.dropna()
+    # Drop completely corrupted rows just in case and strictly enforce unique time!
+    bc_df = bc_df.dropna(subset=['Time_s'])
+    bc_df = bc_df.drop_duplicates(subset=['Time_s'], keep='first')
     
     bc_df.to_csv(output_bc_file, index=False)
     print(f"Saved boundary conditions to {output_bc_file}")
