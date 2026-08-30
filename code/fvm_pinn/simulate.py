@@ -130,6 +130,8 @@ def main():
     # 5. Run Inference
     print(f"Running Inference for {len(t_all_array)} time steps...")
     pred_wl_obs = []
+    pred_u_obs = []
+    pred_v_obs = []
     
     obs_points_deg = {
         'Lamena': [-0.795668429, 45.3363917],
@@ -154,10 +156,14 @@ def main():
     with torch.no_grad():
         for i, t_val in enumerate(t_all_array):
             lagged_bc = trainer.get_lagged_bc(i)
-            wl_all, _, _ = trainer.predict(lagged_bc=lagged_bc)
+            wl_all, u_all, v_all = trainer.predict(lagged_bc=lagged_bc)
             wl_pred = wl_all[:, 0].cpu().numpy()
+            u_pred = u_all[:, 0].cpu().numpy()
+            v_pred = v_all[:, 0].cpu().numpy()
             
             pred_wl_obs.append(wl_pred[obs_nodes])
+            pred_u_obs.append(u_pred[obs_nodes])
+            pred_v_obs.append(v_pred[obs_nodes])
             
             if i % max(1, len(t_all_array) // 60) == 0:
                 frames_for_anim.append((t_val, wl_pred))
@@ -166,6 +172,8 @@ def main():
                 print(f"Step {i+1}/{len(t_all_array)} processed.")
                 
     pred_wl_obs = np.array(pred_wl_obs)
+    pred_u_obs = np.array(pred_u_obs)
+    pred_v_obs = np.array(pred_v_obs)
     
     # 6. Save outputs
     print("Generating Observation Timeseries...")
@@ -178,6 +186,12 @@ def main():
     
     for i, (name, ax) in enumerate(zip(obs_names, axes)):
         pred_df[name] = pred_wl_obs[:, i]
+        pred_df[f"{name}_WSE"] = pred_wl_obs[:, i]
+        pred_df[f"{name}_U"] = pred_u_obs[:, i]
+        pred_df[f"{name}_V"] = pred_v_obs[:, i]
+        # Signed magnitude (using U direction for sign)
+        pred_df[f"{name}_VelMag"] = np.sqrt(pred_u_obs[:, i]**2 + pred_v_obs[:, i]**2) * np.sign(pred_u_obs[:, i])
+        
         ax.plot(t_hours, pred_wl_obs[:, i], 'r-', label='PINN Prediction', linewidth=2)
         ax.set_title(f'Station: {name}')
         ax.set_ylabel('Water Level (m)')

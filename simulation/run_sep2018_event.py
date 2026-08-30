@@ -16,7 +16,7 @@ def prepare_data(excel_path, output_bc_file):
         sys.exit(1)
         
     start_date = pd.to_datetime('2018-09-10 00:00:00')
-    end_date = pd.to_datetime('2018-09-20 23:59:59')
+    end_date = pd.to_datetime('2018-09-16 23:59:59') # 7 Days
     
     unified_df = None
     
@@ -148,25 +148,50 @@ def plot_validation(output_dir):
     start_date = pd.to_datetime('2018-09-10 00:00:00')
     df_true_filtered['Time_s'] = (df_true_filtered['Unified_Time'] - start_date).dt.total_seconds()
     
-    stations = [c for c in df_pred.columns if c not in ['Time_s', 'Time_Hours']]
+    stations = []
+    for c in df_pred.columns:
+        if c.endswith('_WSE'):
+            stations.append(c[:-4])
     
     fig, axes = plt.subplots(len(stations) // 2 + len(stations) % 2, 2, figsize=(20, 4 * (len(stations)//2)), dpi=150, sharex=True)
     axes = axes.flatten()
     
     for i, station in enumerate(stations):
-        # Try to find matching column in true data, excluding time columns
-        # Handle typo 'For Medoc' -> 'Fort Medoc'
+        is_velocity = station in ['P1', 'P4']
+        pred_col = f"{station}_U" if is_velocity else f"{station}_WSE"
+        ylabel = "Velocity U (m/s)" if is_velocity else "Water Level (m)"
+        
+        # Try to find matching column in true data, excluding time, date, and ssc columns
         search_str = "for medoc" if station.lower() == "fort medoc" else station.lower()
-        true_col = next((c for c in df_true_filtered.columns if search_str in str(c).lower() and 'time' not in str(c).lower() and 'date' not in str(c).lower()), None)
+        true_col = next((c for c in df_true_filtered.columns if search_str in str(c).lower() and 'time' not in str(c).lower() and 'date' not in str(c).lower() and 'ssc' not in str(c).lower()), None)
         
         ax = axes[i]
-        ax.plot(df_pred['Time_Hours'], df_pred[station], 'r-', label='PI-GNN Prediction', linewidth=2)
+        ax.plot(df_pred['Time_Hours'], df_pred[pred_col], 'r-', label='PI-GNN Prediction', linewidth=2)
         
         if true_col:
-            ax.plot(df_true_filtered['Time_s'] / 3600.0, df_true_filtered[true_col], 'k--', label='True Observation (Excel)', alpha=0.7)
+            # Drop NaNs from true observations for accurate metrics
+            valid_mask = ~df_true_filtered[true_col].isna()
+            true_times = df_true_filtered.loc[valid_mask, 'Time_s'].values
+            true_vals = df_true_filtered.loc[valid_mask, true_col].values
             
-        ax.set_title(f'Validation Station: {station}')
-        ax.set_ylabel('Water Level (m)')
+            if len(true_vals) > 5:
+                # Interpolate prediction to the exact timestamps of true observations
+                pred_interp = np.interp(true_times, df_pred['Time_s'].values, df_pred[pred_col].values)
+                
+                # Compute metrics
+                var = np.sum((true_vals - np.mean(true_vals))**2)
+                nse = 1 - np.sum((true_vals - pred_interp)**2) / (var + 1e-8)
+                r2 = np.corrcoef(true_vals, pred_interp)[0, 1]**2 if var > 1e-6 else 0.0
+                
+                title = f'Station: {station} | R²: {r2:.3f} | NSE: {nse:.3f}'
+                ax.plot(true_times / 3600.0, true_vals, 'k--', label='True Obs (Excel)', alpha=0.7)
+            else:
+                title = f'Station: {station} (Not enough valid true data)'
+        else:
+            title = f'Station: {station} (No true data found)'
+            
+        ax.set_title(title)
+        ax.set_ylabel(ylabel)
         ax.grid(True)
         ax.legend()
         
