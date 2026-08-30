@@ -172,12 +172,22 @@ def main():
     t_hours = t_all_array / 3600.0
     fig, axes = plt.subplots(4, 2, figsize=(20, 16), dpi=150, sharex=True)
     axes = axes.flatten()
+    
+    # Save predictions to CSV for external validation
+    pred_df = pd.DataFrame({'Time_s': t_all_array, 'Time_Hours': t_hours})
+    
     for i, (name, ax) in enumerate(zip(obs_names, axes)):
+        pred_df[name] = pred_wl_obs[:, i]
         ax.plot(t_hours, pred_wl_obs[:, i], 'r-', label='PINN Prediction', linewidth=2)
         ax.set_title(f'Station: {name}')
         ax.set_ylabel('Water Level (m)')
         ax.grid(True)
         ax.legend()
+        
+    pred_csv_path = os.path.join(args.output_dir, 'station_predictions.csv')
+    pred_df.to_csv(pred_csv_path, index=False)
+    print(f"Saved raw predictions to {pred_csv_path}")
+    
     axes[-2].set_xlabel('Time (Hours)')
     axes[-1].set_xlabel('Time (Hours)')
     plt.tight_layout()

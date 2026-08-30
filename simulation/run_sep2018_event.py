@@ -83,10 +83,64 @@ def run_simulation(bc_file, simulate_script, model_path, nc_file, output_dir):
     
     try:
         subprocess.run(cmd, check=True)
+        return True
     except subprocess.CalledProcessError as e:
         print(f"Simulation failed with error code {e.returncode}")
+        return False
     except Exception as e:
         print(f"Error running simulation: {e}")
+        return False
+
+def plot_validation(excel_path, output_dir):
+    print("Generating Validation Plots against True Observations...")
+    import matplotlib.pyplot as plt
+    
+    pred_csv = os.path.join(output_dir, "station_predictions.csv")
+    if not os.path.exists(pred_csv):
+        print("Predictions CSV not found. Skipping validation.")
+        return
+        
+    df_pred = pd.read_csv(pred_csv)
+    df_true = pd.read_excel(excel_path)
+    
+    date_col = next((c for c in df_true.columns if 'date' in str(c).lower() or 'time' in str(c).lower()), df_true.columns[0])
+    df_true[date_col] = pd.to_datetime(df_true[date_col])
+    
+    start_date = pd.to_datetime('2018-09-10 00:00:00')
+    end_date = pd.to_datetime('2018-09-20 23:59:59')
+    mask = (df_true[date_col] >= start_date) & (df_true[date_col] <= end_date)
+    df_true_filtered = df_true.loc[mask].copy()
+    
+    df_true_filtered['Time_s'] = (df_true_filtered[date_col] - start_date).dt.total_seconds()
+    
+    stations = [c for c in df_pred.columns if c not in ['Time_s', 'Time_Hours']]
+    
+    fig, axes = plt.subplots(len(stations) // 2 + len(stations) % 2, 2, figsize=(20, 4 * (len(stations)//2)), dpi=150, sharex=True)
+    axes = axes.flatten()
+    
+    for i, station in enumerate(stations):
+        # Try to find matching column in true data
+        true_col = next((c for c in df_true_filtered.columns if station.lower() in str(c).lower()), None)
+        
+        ax = axes[i]
+        ax.plot(df_pred['Time_Hours'], df_pred[station], 'r-', label='PI-GNN Prediction', linewidth=2)
+        
+        if true_col:
+            ax.plot(df_true_filtered['Time_s'] / 3600.0, df_true_filtered[true_col], 'k--', label='True Observation (Excel)', alpha=0.7)
+            
+        ax.set_title(f'Validation Station: {station}')
+        ax.set_ylabel('Water Level (m)')
+        ax.grid(True)
+        ax.legend()
+        
+    for ax in axes[-2:]:
+        ax.set_xlabel('Time (Hours)')
+        
+    plt.tight_layout()
+    val_path = os.path.join(output_dir, 'validation_vs_truth.png')
+    plt.savefig(val_path)
+    plt.close()
+    print(f"Validation plot saved to {val_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract BCs from Excel and Run PI-GNN Simulation")
@@ -107,5 +161,9 @@ if __name__ == "__main__":
         os.makedirs(args.output_dir)
         
     prepare_data(args.excel_path, output_bc_file)
-    run_simulation(output_bc_file, args.simulate_script, args.model_path, args.nc_file, args.output_dir)
+    success = run_simulation(output_bc_file, args.simulate_script, args.model_path, args.nc_file, args.output_dir)
+    
+    if success:
+        plot_validation(args.excel_path, args.output_dir)
+
 
