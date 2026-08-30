@@ -6,57 +6,69 @@ import sys
 import argparse
 
 def prepare_data(excel_path, output_bc_file):
-    print(f"Reading {excel_path}...")
+    print(f"Reading all sheets from {excel_path}...")
     
     try:
-        df = pd.read_excel(excel_path)
+        # Read all sheets into a dictionary of dataframes
+        dfs = pd.read_excel(excel_path, sheet_name=None)
     except Exception as e:
         print(f"Failed to read excel file: {e}")
         sys.exit(1)
-    
-    # Try to find the date column
-    date_col = next((c for c in df.columns if 'date' in str(c).lower() or 'time' in str(c).lower()), df.columns[0])
-    
-    # Ensure it's datetime
-    df[date_col] = pd.to_datetime(df[date_col])
-    
-    # Filter for 10-20 September 2018
-    # Using 10th Sep 00:00:00 to 20th Sep 23:59:59
+        
     start_date = pd.to_datetime('2018-09-10 00:00:00')
     end_date = pd.to_datetime('2018-09-20 23:59:59')
     
-    mask = (df[date_col] >= start_date) & (df[date_col] <= end_date)
-    df_filtered = df.loc[mask].copy()
+    # We will build a unified dataframe with all columns from all sheets based on matching times
+    unified_df = None
     
-    if df_filtered.empty:
-        print("Error: No data found for the date range 10-20 September 2018.")
-        print(f"Available date range: {df[date_col].min()} to {df[date_col].max()}")
+    for sheet_name, df in dfs.items():
+        # Try to find date/time column in this sheet
+        date_col = next((c for c in df.columns if 'date' in str(c).lower() or 'time' in str(c).lower()), None)
+        if not date_col:
+            continue
+            
+        df[date_col] = pd.to_datetime(df[date_col])
+        mask = (df[date_col] >= start_date) & (df[date_col] <= end_date)
+        df_filtered = df.loc[mask].copy()
+        
+        if df_filtered.empty:
+            continue
+            
+        # Standardize the time column name for merging
+        df_filtered = df_filtered.rename(columns={date_col: 'Unified_Time'})
+        
+        if unified_df is None:
+            unified_df = df_filtered
+        else:
+            # Merge on time, avoiding duplicate column names if possible
+            cols_to_use = ['Unified_Time'] + [c for c in df_filtered.columns if c != 'Unified_Time' and c not in unified_df.columns]
+            unified_df = pd.merge(unified_df, df_filtered[cols_to_use], on='Unified_Time', how='outer')
+            
+    if unified_df is None or unified_df.empty:
+        print("Error: No data found for the date range 10-20 September 2018 across any sheets.")
         sys.exit(1)
         
-    print(f"Found {len(df_filtered)} rows for the specified date range.")
+    print(f"Unified data has {len(unified_df)} rows for the specified date range.")
+    print(f"Available columns across all sheets: {unified_df.columns.tolist()}")
     
     # Find columns dynamically based on user description
-    port_col = next((c for c in df.columns if 'port' in str(c).lower() or 'block' in str(c).lower()), None)
-    gar_col = next((c for c in df.columns if 'garonne' in str(c).lower()), None)
-    dor_col = next((c for c in df.columns if 'dordogne' in str(c).lower()), None)
+    port_col = next((c for c in unified_df.columns if 'port' in str(c).lower() or 'block' in str(c).lower()), None)
+    gar_col = next((c for c in unified_df.columns if 'garonne' in str(c).lower()), None)
+    dor_col = next((c for c in unified_df.columns if 'dordogne' in str(c).lower()), None)
     
     if not all([port_col, gar_col, dor_col]):
-        print(f"Available columns: {df.columns.tolist()}")
         print(f"Detected columns - Port Block: {port_col}, Garonne: {gar_col}, Dordogne: {dor_col}")
         print("Please ensure the excel file has identifiable column names for these stations.")
         sys.exit(1)
         
-    print(f"Mapped columns: Time={date_col}, Downstream={port_col}, Upstream_1={gar_col}, Upstream_2={dor_col}")
+    print(f"Mapped columns: Downstream={port_col}, Upstream_1={gar_col}, Upstream_2={dor_col}")
     
     # Create the BC dataframe as expected by simulate.py
     bc_df = pd.DataFrame()
-    
-    # Time_s is seconds from the start of the simulation event (2018-09-10 00:00:00)
-    bc_df['Time_s'] = (df_filtered[date_col] - start_date).dt.total_seconds()
-    
-    bc_df['H_ocean'] = df_filtered[port_col].values
-    bc_df['Q_garonne'] = df_filtered[gar_col].values
-    bc_df['Q_dordogne'] = df_filtered[dor_col].values
+    bc_df['Time_s'] = (unified_df['Unified_Time'] - start_date).dt.total_seconds()
+    bc_df['H_ocean'] = unified_df[port_col].values
+    bc_df['Q_garonne'] = unified_df[gar_col].values
+    bc_df['Q_dordogne'] = unified_df[dor_col].values
     
     # Drop rows with NaN if any exist in the required columns
     bc_df = bc_df.dropna()
@@ -64,6 +76,10 @@ def prepare_data(excel_path, output_bc_file):
     
     bc_df.to_csv(output_bc_file, index=False)
     print(f"Saved boundary conditions to {output_bc_file}")
+    
+    # Also save the full unified dataframe for validation to use
+    unified_out = os.path.join(os.path.dirname(output_bc_file), "unified_true_data.csv")
+    unified_df.to_csv(unified_out, index=False)
     
     return output_bc_file
 
@@ -91,27 +107,23 @@ def run_simulation(bc_file, simulate_script, model_path, nc_file, output_dir):
         print(f"Error running simulation: {e}")
         return False
 
-def plot_validation(excel_path, output_dir):
+def plot_validation(output_dir):
     print("Generating Validation Plots against True Observations...")
     import matplotlib.pyplot as plt
     
     pred_csv = os.path.join(output_dir, "station_predictions.csv")
-    if not os.path.exists(pred_csv):
-        print("Predictions CSV not found. Skipping validation.")
+    unified_csv = os.path.join(output_dir, "unified_true_data.csv")
+    
+    if not os.path.exists(pred_csv) or not os.path.exists(unified_csv):
+        print("Predictions or True Data CSV not found. Skipping validation.")
         return
         
     df_pred = pd.read_csv(pred_csv)
-    df_true = pd.read_excel(excel_path)
+    df_true_filtered = pd.read_csv(unified_csv)
     
-    date_col = next((c for c in df_true.columns if 'date' in str(c).lower() or 'time' in str(c).lower()), df_true.columns[0])
-    df_true[date_col] = pd.to_datetime(df_true[date_col])
-    
+    df_true_filtered['Unified_Time'] = pd.to_datetime(df_true_filtered['Unified_Time'])
     start_date = pd.to_datetime('2018-09-10 00:00:00')
-    end_date = pd.to_datetime('2018-09-20 23:59:59')
-    mask = (df_true[date_col] >= start_date) & (df_true[date_col] <= end_date)
-    df_true_filtered = df_true.loc[mask].copy()
-    
-    df_true_filtered['Time_s'] = (df_true_filtered[date_col] - start_date).dt.total_seconds()
+    df_true_filtered['Time_s'] = (df_true_filtered['Unified_Time'] - start_date).dt.total_seconds()
     
     stations = [c for c in df_pred.columns if c not in ['Time_s', 'Time_Hours']]
     
@@ -164,6 +176,6 @@ if __name__ == "__main__":
     success = run_simulation(output_bc_file, args.simulate_script, args.model_path, args.nc_file, args.output_dir)
     
     if success:
-        plot_validation(args.excel_path, args.output_dir)
+        plot_validation(args.output_dir)
 
 
