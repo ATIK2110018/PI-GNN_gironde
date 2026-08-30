@@ -15,52 +15,35 @@ def prepare_data(excel_path, output_bc_file):
         print(f"Failed to read excel file: {e}")
         sys.exit(1)
         
+    # The user explicitly guarantees that ALL sheets start exactly at 2018-08-01 00:00:00
+    # and have exactly 1-hour intervals, row by row. We must ignore the corrupt Excel time columns!
+    master_start_date = pd.to_datetime('2018-08-01 00:00:00')
+    
     start_date = pd.to_datetime('2018-09-10 00:00:00')
     end_date = pd.to_datetime('2018-09-16 23:59:59') # 7 Days
     
-    unified_df = None
+    processed_dfs = []
     
     for sheet_name, df in dfs.items():
-        # Find the time column for this specific sheet
-        date_col = next((c for c in df.columns if 'date' in str(c).lower() or 'time' in str(c).lower()), None)
-        if not date_col:
-            continue
+        # Drop ANY column that looks like time or date because they are corrupted/misformatted
+        cols_to_drop = [c for c in df.columns if 'date' in str(c).lower() or 'time' in str(c).lower()]
+        df_clean = df.drop(columns=cols_to_drop)
+        
+        # Prefix columns with sheet name to prevent overlapping names
+        rename_dict = {c: f"{sheet_name}_{c}" for c in df_clean.columns}
+        df_clean = df_clean.rename(columns=rename_dict).reset_index(drop=True)
+        
+        processed_dfs.append(df_clean)
             
-        # Parse the datetime robustly
-        df['Unified_Time'] = pd.to_datetime(df[date_col], format='mixed', dayfirst=True, errors='coerce')
-        df = df.dropna(subset=['Unified_Time'])
-        
-        # CRITICAL FIX: Round time to nearest hour to force perfect alignment across sheets
-        # This fixes any slight timestamp discrepancies (e.g., 10:01 vs 10:00) that would otherwise misalign rows!
-        df['Unified_Time'] = df['Unified_Time'].dt.round('h')
-        
-        # Drop duplicates to prevent Scipy interpolation crashes (divide by zero)
-        df = df.drop_duplicates(subset=['Unified_Time'], keep='first')
-        
-        # Filter for the event
-        mask = (df['Unified_Time'] >= start_date) & (df['Unified_Time'] <= end_date)
-        df_filtered = df.loc[mask].copy()
-        
-        if df_filtered.empty:
-            continue
-            
-        # Prefix columns with sheet name
-        rename_dict = {c: f"{sheet_name}_{c}" for c in df_filtered.columns if c != 'Unified_Time'}
-        df_filtered = df_filtered.rename(columns=rename_dict)
-        
-        # Drop the original unrounded time column to avoid clutter
-        original_time_col_renamed = f"{sheet_name}_{date_col}"
-        if original_time_col_renamed in df_filtered.columns:
-            df_filtered = df_filtered.drop(columns=[original_time_col_renamed])
-            
-        # Merge on the perfectly rounded time!
-        if unified_df is None:
-            unified_df = df_filtered
-        else:
-            unified_df = pd.merge(unified_df, df_filtered, on='Unified_Time', how='outer')
-            
-    # Sort the final merged dataframe by time
-    unified_df = unified_df.sort_values('Unified_Time').reset_index(drop=True)
+    # Concatenate side-by-side (row 1 matches row 1, etc.)
+    unified_df = pd.concat(processed_dfs, axis=1)
+    
+    # Generate the absolute, mathematically perfect time index based on the user's guarantee
+    unified_df['Unified_Time'] = pd.date_range(start=master_start_date, periods=len(unified_df), freq='h')
+    
+    # Now slice the dataframe for the exact simulation window
+    mask = (unified_df['Unified_Time'] >= start_date) & (unified_df['Unified_Time'] <= end_date)
+    unified_df = unified_df.loc[mask].copy().reset_index(drop=True)
     
     if unified_df.empty:
         print("Error: No data found for the date range 10-20 September 2018.")
