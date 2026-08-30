@@ -93,22 +93,27 @@ def plot_boundary_conditions(bc_file, output_dir):
     
     fig, axes = plt.subplots(3, 1, figsize=(12, 10), dpi=150, sharex=True)
     
-    t_hours = bc_df['Time_s'] / 3600.0
+    import matplotlib.dates as mdates
+    date_fmt = mdates.DateFormatter('%b %d')
+    sim_start_date = pd.to_datetime('2018-09-09 18:00:00')
     
-    axes[0].plot(t_hours, bc_df['H_ocean'], 'b-', linewidth=2)
+    t_dates = sim_start_date + pd.to_timedelta(bc_df['Time_s'], unit='s')
+    
+    axes[0].plot(t_dates, bc_df['H_ocean'], 'b-', linewidth=2)
     axes[0].set_title('Ocean Boundary (Port Bloc) - Water Level')
     axes[0].set_ylabel('WSE (m)')
     axes[0].grid(True)
     
-    axes[1].plot(t_hours, bc_df['Q_garonne'], 'g-', linewidth=2)
+    axes[1].plot(t_dates, bc_df['Q_garonne'], 'g-', linewidth=2)
     axes[1].set_title('Upstream Boundary - Garonne Discharge')
     axes[1].set_ylabel('Discharge (m³/s)')
     axes[1].grid(True)
     
-    axes[2].plot(t_hours, bc_df['Q_dordogne'], 'r-', linewidth=2)
+    axes[2].plot(t_dates, bc_df['Q_dordogne'], 'r-', linewidth=2)
     axes[2].set_title('Upstream Boundary - Dordogne Discharge')
     axes[2].set_ylabel('Discharge (m³/s)')
-    axes[2].set_xlabel('Time (Hours)')
+    axes[2].set_xlabel('Date')
+    axes[2].xaxis.set_major_formatter(date_fmt)
     axes[2].grid(True)
     
     plt.tight_layout()
@@ -222,6 +227,11 @@ def plot_validation(output_dir):
     })
         
     # --- 1. Create Combined Figure ---
+    import matplotlib.dates as mdates
+    date_fmt = mdates.DateFormatter('%b %d')
+    
+    df_pred_eval['Datetime'] = eval_start_date + pd.to_timedelta(df_pred_eval['Time_s_Norm'], unit='s')
+    
     num_stations = len(valid_stations)
     cols = 2
     rows = (num_stations + 1) // 2
@@ -236,7 +246,7 @@ def plot_validation(output_dir):
         data = station_data[station]
         ax = axes[i]
         
-        ax.plot(df_pred_eval['Time_Hours_Norm'], df_pred_eval[data['pred_col']], 'r-', label='PI-GNN Prediction', linewidth=2)
+        ax.plot(df_pred_eval['Datetime'], df_pred_eval[data['pred_col']], 'r-', label='PI-GNN Prediction', linewidth=2)
         
         true_times = data['true_times']
         true_vals = data['true_vals']
@@ -249,9 +259,11 @@ def plot_validation(output_dir):
         
         title = f'Station: {station} | R²: {r2:.3f} | NSE: {nse:.3f}'
         
-        ax.plot(true_times / 3600.0, true_vals, 'k--', label='True Obs (Excel)', alpha=0.8, linewidth=1.5)
+        true_datetimes = eval_start_date + pd.to_timedelta(true_times, unit='s')
+        ax.plot(true_datetimes, true_vals, 'k--', label='True Obs (Excel)', alpha=0.8, linewidth=1.5)
         ax.set_title(title, fontweight='bold')
         ax.set_ylabel(data['ylabel'], fontweight='bold')
+        ax.xaxis.set_major_formatter(date_fmt)
         ax.grid(True, linestyle=':', alpha=0.7)
         ax.legend(loc='upper right')
         
@@ -260,7 +272,7 @@ def plot_validation(output_dir):
         fig_comb.delaxes(axes[j])
         
     for ax in axes[-2:]:
-        ax.set_xlabel('Time (Hours)', fontweight='bold')
+        ax.set_xlabel('Date', fontweight='bold')
         
     plt.tight_layout()
     val_path = os.path.join(output_dir, 'validation_combined.png')
@@ -274,7 +286,7 @@ def plot_validation(output_dir):
         
         fig_ind, ax_ind = plt.subplots(figsize=(10, 6))
         
-        ax_ind.plot(df_pred_eval['Time_Hours_Norm'], df_pred_eval[data['pred_col']], 'r-', label='PI-GNN Prediction', linewidth=2.5)
+        ax_ind.plot(df_pred_eval['Datetime'], df_pred_eval[data['pred_col']], 'r-', label='PI-GNN Prediction', linewidth=2.5)
         
         true_times = data['true_times']
         true_vals = data['true_vals']
@@ -285,11 +297,13 @@ def plot_validation(output_dir):
         nse = 1 - np.sum((true_vals - pred_interp)**2) / (var + 1e-8)
         r2 = np.corrcoef(true_vals, pred_interp)[0, 1]**2 if var > 1e-6 else 0.0
         
-        ax_ind.plot(true_times / 3600.0, true_vals, 'k--', label='True Obs (Excel)', alpha=0.8, linewidth=2.0)
+        true_datetimes = eval_start_date + pd.to_timedelta(true_times, unit='s')
+        ax_ind.plot(true_datetimes, true_vals, 'k--', label='True Obs (Excel)', alpha=0.8, linewidth=2.0)
         
         ax_ind.set_title(f'Validation at {station}\nR²: {r2:.3f} | NSE: {nse:.3f}', fontweight='bold', pad=15)
         ax_ind.set_ylabel(data['ylabel'], fontweight='bold', labelpad=10)
-        ax_ind.set_xlabel('Time (Hours)', fontweight='bold', labelpad=10)
+        ax_ind.set_xlabel('Date', fontweight='bold', labelpad=10)
+        ax_ind.xaxis.set_major_formatter(date_fmt)
         
         ax_ind.grid(True, linestyle=':', alpha=0.7)
         ax_ind.legend(loc='upper right', framealpha=0.9)
