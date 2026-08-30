@@ -54,10 +54,13 @@ def prepare_data(excel_path, output_bc_file):
     print(f"Unified data has {len(unified_df)} rows for the specified date range.")
     print(f"Available columns across all sheets: {unified_df.columns.tolist()}")
     
-    # Find columns dynamically based on user description
-    port_col = next((c for c in unified_df.columns if 'port' in str(c).lower() or 'block' in str(c).lower()), None)
-    gar_col = next((c for c in unified_df.columns if 'garonne' in str(c).lower()), None)
-    dor_col = next((c for c in unified_df.columns if 'dordogne' in str(c).lower()), None)
+    # Find columns dynamically based on user description (exclude time/date columns)
+    def get_data_col(keyword):
+        return next((c for c in unified_df.columns if keyword in str(c).lower() and 'time' not in str(c).lower() and 'date' not in str(c).lower()), None)
+        
+    port_col = get_data_col('port')
+    gar_col = get_data_col('garonne')
+    dor_col = get_data_col('dordogne')
     
     if not all([port_col, gar_col, dor_col]):
         print(f"Detected columns - Port Block: {port_col}, Garonne: {gar_col}, Dordogne: {dor_col}")
@@ -139,8 +142,8 @@ def plot_validation(output_dir):
     axes = axes.flatten()
     
     for i, station in enumerate(stations):
-        # Try to find matching column in true data
-        true_col = next((c for c in df_true_filtered.columns if station.lower() in str(c).lower()), None)
+        # Try to find matching column in true data, excluding time columns
+        true_col = next((c for c in df_true_filtered.columns if station.lower() in str(c).lower() and 'time' not in str(c).lower() and 'date' not in str(c).lower()), None)
         
         ax = axes[i]
         ax.plot(df_pred['Time_Hours'], df_pred[station], 'r-', label='PI-GNN Prediction', linewidth=2)
