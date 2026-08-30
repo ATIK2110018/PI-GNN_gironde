@@ -171,11 +171,14 @@ def plot_validation(output_dir):
         if c.endswith('_WSE'):
             stations.append(c[:-4])
     
-    # Filter stations to only those with valid true data
+    # Filter stations to only those with valid true data and explicitly skip Le Marquis due to corrupted Excel data
     valid_stations = []
     station_data = {}
     
     for station in stations:
+        if station.lower() == 'le marquis':
+            continue
+            
         is_velocity = station in ['P1', 'P4']
         pred_col = f"{station}_U" if is_velocity else f"{station}_WSE"
         ylabel = "Velocity U (m/s)" if is_velocity else "Water Level (m)"
@@ -201,13 +204,23 @@ def plot_validation(output_dir):
         print("No stations with valid true data found. Skipping validation plot.")
         return
         
-    # Create subplots only for valid stations
+    # Set publication quality settings
+    plt.rcParams.update({
+        'font.size': 12,
+        'axes.labelsize': 14,
+        'axes.titlesize': 14,
+        'xtick.labelsize': 12,
+        'ytick.labelsize': 12,
+        'legend.fontsize': 12,
+        'figure.dpi': 300
+    })
+        
+    # --- 1. Create Combined Figure ---
     num_stations = len(valid_stations)
     cols = 2
     rows = (num_stations + 1) // 2
-    fig, axes = plt.subplots(rows, cols, figsize=(20, 4 * rows), dpi=150, sharex=True)
+    fig_comb, axes = plt.subplots(rows, cols, figsize=(18, 5 * rows), sharex=True)
     
-    # Handle single row/col cases
     if num_stations == 1:
         axes = [axes]
     elif rows > 1 or cols > 1:
@@ -230,24 +243,60 @@ def plot_validation(output_dir):
         
         title = f'Station: {station} | R²: {r2:.3f} | NSE: {nse:.3f}'
         
-        ax.plot(true_times / 3600.0, true_vals, 'k--', label='True Obs (Excel)', alpha=0.7)
-        ax.set_title(title)
-        ax.set_ylabel(data['ylabel'])
-        ax.grid(True)
-        ax.legend()
+        ax.plot(true_times / 3600.0, true_vals, 'k--', label='True Obs (Excel)', alpha=0.8, linewidth=1.5)
+        ax.set_title(title, fontweight='bold')
+        ax.set_ylabel(data['ylabel'], fontweight='bold')
+        ax.grid(True, linestyle=':', alpha=0.7)
+        ax.legend(loc='upper right')
         
     # Hide any unused subplots
     for j in range(i + 1, len(axes)):
-        fig.delaxes(axes[j])
+        fig_comb.delaxes(axes[j])
         
     for ax in axes[-2:]:
-        ax.set_xlabel('Time (Hours)')
+        ax.set_xlabel('Time (Hours)', fontweight='bold')
         
     plt.tight_layout()
-    val_path = os.path.join(output_dir, 'validation_vs_truth.png')
-    plt.savefig(val_path)
-    plt.close()
-    print(f"Validation plot saved to {val_path}")
+    val_path = os.path.join(output_dir, 'validation_combined.png')
+    fig_comb.savefig(val_path, bbox_inches='tight')
+    plt.close(fig_comb)
+    print(f"Combined validation plot saved to {val_path}")
+    
+    # --- 2. Create Individual Publication Figures ---
+    for station in valid_stations:
+        data = station_data[station]
+        
+        fig_ind, ax_ind = plt.subplots(figsize=(10, 6))
+        
+        ax_ind.plot(df_pred['Time_Hours'], df_pred[data['pred_col']], 'r-', label='PI-GNN Prediction', linewidth=2.5)
+        
+        true_times = data['true_times']
+        true_vals = data['true_vals']
+        
+        pred_interp = np.interp(true_times, df_pred['Time_s'].values, df_pred[data['pred_col']].values)
+        
+        var = np.sum((true_vals - np.mean(true_vals))**2)
+        nse = 1 - np.sum((true_vals - pred_interp)**2) / (var + 1e-8)
+        r2 = np.corrcoef(true_vals, pred_interp)[0, 1]**2 if var > 1e-6 else 0.0
+        
+        ax_ind.plot(true_times / 3600.0, true_vals, 'k--', label='True Obs (Excel)', alpha=0.8, linewidth=2.0)
+        
+        ax_ind.set_title(f'Validation at {station}\nR²: {r2:.3f} | NSE: {nse:.3f}', fontweight='bold', pad=15)
+        ax_ind.set_ylabel(data['ylabel'], fontweight='bold', labelpad=10)
+        ax_ind.set_xlabel('Time (Hours)', fontweight='bold', labelpad=10)
+        
+        ax_ind.grid(True, linestyle=':', alpha=0.7)
+        ax_ind.legend(loc='upper right', framealpha=0.9)
+        
+        # Format axes slightly better for individual plots
+        ax_ind.spines['top'].set_visible(False)
+        ax_ind.spines['right'].set_visible(False)
+        
+        plt.tight_layout()
+        ind_path = os.path.join(output_dir, f'validation_{station.replace(" ", "_")}.png')
+        fig_ind.savefig(ind_path, bbox_inches='tight', dpi=300)
+        plt.close(fig_ind)
+        print(f"Individual plot saved for {station} to {ind_path}")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract BCs from Excel and Run PI-GNN Simulation")
