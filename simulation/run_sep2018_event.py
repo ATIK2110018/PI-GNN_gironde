@@ -110,6 +110,37 @@ def prepare_data(excel_path, output_bc_file):
     
     return output_bc_file
 
+def plot_boundary_conditions(bc_file, output_dir):
+    print("Plotting extracted Boundary Conditions...")
+    import matplotlib.pyplot as plt
+    bc_df = pd.read_csv(bc_file)
+    
+    fig, axes = plt.subplots(3, 1, figsize=(12, 10), dpi=150, sharex=True)
+    
+    t_hours = bc_df['Time_s'] / 3600.0
+    
+    axes[0].plot(t_hours, bc_df['H_ocean'], 'b-', linewidth=2)
+    axes[0].set_title('Ocean Boundary (Port Bloc) - Water Level')
+    axes[0].set_ylabel('WSE (m)')
+    axes[0].grid(True)
+    
+    axes[1].plot(t_hours, bc_df['Q_garonne'], 'g-', linewidth=2)
+    axes[1].set_title('Upstream Boundary - Garonne Discharge')
+    axes[1].set_ylabel('Discharge (m³/s)')
+    axes[1].grid(True)
+    
+    axes[2].plot(t_hours, bc_df['Q_dordogne'], 'r-', linewidth=2)
+    axes[2].set_title('Upstream Boundary - Dordogne Discharge')
+    axes[2].set_ylabel('Discharge (m³/s)')
+    axes[2].set_xlabel('Time (Hours)')
+    axes[2].grid(True)
+    
+    plt.tight_layout()
+    plot_path = os.path.join(output_dir, 'extracted_boundary_conditions.png')
+    plt.savefig(plot_path)
+    plt.close()
+    print(f"Boundary conditions plot saved to {plot_path}")
+
 def run_simulation(bc_file, simulate_script, model_path, nc_file, output_dir):
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -227,6 +258,7 @@ if __name__ == "__main__":
         os.makedirs(args.output_dir)
         
     prepare_data(args.excel_path, output_bc_file)
+    plot_boundary_conditions(output_bc_file, args.output_dir)
     success = run_simulation(output_bc_file, args.simulate_script, args.model_path, args.nc_file, args.output_dir)
     
     if success:
