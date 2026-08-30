@@ -174,7 +174,8 @@ def plot_validation(output_dir):
     df_true_eval = df_true_filtered[df_true_filtered['Time_s'] >= spinup_seconds].copy()
     
     # Normalize time axes so 0 is exactly at eval_start_date
-    df_pred_eval['Time_Hours_Norm'] = (df_pred_eval['Time_s'] - spinup_seconds) / 3600.0
+    df_pred_eval['Time_s_Norm'] = df_pred_eval['Time_s'] - spinup_seconds
+    df_pred_eval['Time_Hours_Norm'] = df_pred_eval['Time_s_Norm'] / 3600.0
     df_true_eval['Time_s_Norm'] = df_true_eval['Time_s'] - spinup_seconds
     
     stations = []
