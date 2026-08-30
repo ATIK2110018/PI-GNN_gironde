@@ -62,6 +62,7 @@ class GPUHydrodynamicModel:
         self.e_len = torch.tensor(edge_lengths, dtype=torch.float32, device=device).unsqueeze(1)
         
         c_coords = torch.tensor(cell_coords, dtype=torch.float32, device=device)
+        self.cell_coords = c_coords
         self.d_LR = torch.norm(c_coords[self.c_R] - c_coords[self.c_L], dim=1)
         self.d_LR = torch.clamp(self.d_LR, min=1.0)
         
