@@ -15,8 +15,8 @@ def prepare_data(excel_path, output_bc_file):
         print(f"Failed to read excel file: {e}")
         sys.exit(1)
         
-    # The user explicitly guarantees that ALL sheets start exactly at 2018-08-01 00:00:00
-    # and have exactly 1-hour intervals, row by row. We must ignore the corrupt Excel time columns!
+    # Sheets start exactly at 2018-08-01 00:00:00 with 1-hour intervals.
+    # Ignore existing time columns.
     master_start_date = pd.to_datetime('2018-08-01 00:00:00')
     
     sim_start_date = pd.to_datetime('2018-09-09 18:00:00') # 6 hours spin-up
@@ -26,7 +26,7 @@ def prepare_data(excel_path, output_bc_file):
     processed_dfs = []
     
     for sheet_name, df in dfs.items():
-        # Drop ANY column that looks like time or date because they are corrupted/misformatted
+        # Drop time or date columns
         cols_to_drop = [c for c in df.columns if 'date' in str(c).lower() or 'time' in str(c).lower()]
         df_clean = df.drop(columns=cols_to_drop)
         
@@ -39,10 +39,10 @@ def prepare_data(excel_path, output_bc_file):
     # Concatenate side-by-side (row 1 matches row 1, etc.)
     unified_df = pd.concat(processed_dfs, axis=1)
     
-    # Generate the absolute, mathematically perfect time index based on the user's guarantee
+    # Generate uniform time index
     unified_df['Unified_Time'] = pd.date_range(start=master_start_date, periods=len(unified_df), freq='h')
     
-    # Now slice the dataframe for the exact simulation window (including spin-up)
+    # Slice dataframe for the simulation window (including spin-up)
     mask = (unified_df['Unified_Time'] >= sim_start_date) & (unified_df['Unified_Time'] <= end_date)
     unified_df = unified_df.loc[mask].copy().reset_index(drop=True)
     
@@ -162,13 +162,13 @@ def plot_validation(output_dir):
     # Calculate Time_s relative to sim_start_date to match df_pred exactly
     df_true_filtered['Time_s'] = (df_true_filtered['Unified_Time'] - sim_start_date).dt.total_seconds()
     
-    # We must IGNORE the first 6 hours (spin-up) for plotting and metrics!
+    # Exclude the 6-hour spin-up period for plotting and metrics
     spinup_seconds = (eval_start_date - sim_start_date).total_seconds()
     
     df_pred_eval = df_pred[df_pred['Time_s'] >= spinup_seconds].copy()
     df_true_eval = df_true_filtered[df_true_filtered['Time_s'] >= spinup_seconds].copy()
     
-    # Normalize time axes so 0 is exactly at eval_start_date (Sep 10 00:00)
+    # Normalize time axes so 0 is exactly at eval_start_date
     df_pred_eval['Time_Hours_Norm'] = (df_pred_eval['Time_s'] - spinup_seconds) / 3600.0
     df_true_eval['Time_s_Norm'] = df_true_eval['Time_s'] - spinup_seconds
     
@@ -177,7 +177,7 @@ def plot_validation(output_dir):
         if c.endswith('_WSE'):
             stations.append(c[:-4])
     
-    # Filter stations to only those with valid true data and explicitly skip Le Marquis due to corrupted Excel data
+    # Filter stations with valid true data and skip Le Marquis
     valid_stations = []
     station_data = {}
     
