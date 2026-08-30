@@ -53,9 +53,9 @@ def prepare_data(excel_path, output_bc_file):
     print(f"Unified data has {len(unified_df)} rows for the specified date range.")
     print(f"Available columns across all sheets: {unified_df.columns.tolist()}")
     
-    # Find columns dynamically based on user description (exclude time/date columns)
+    # Find columns dynamically based on user description
     def get_data_col(keyword):
-        return next((c for c in unified_df.columns if keyword in str(c).lower() and 'time' not in str(c).lower() and 'date' not in str(c).lower()), None)
+        return next((c for c in unified_df.columns if keyword in str(c).lower()), None)
         
     port_col = get_data_col('port')
     gar_col = get_data_col('garonne')
@@ -76,14 +76,6 @@ def prepare_data(excel_path, output_bc_file):
     bc_df['Q_dordogne'] = unified_df[dor_col].values
     
     bc_df = bc_df.sort_values('Time_s')
-    
-    # The user noted timestamps might be slightly corrupted but serial is correct.
-    # Interpolate to fill any NaN gaps that occurred during the outer merge!
-    bc_df = bc_df.interpolate(method='linear').ffill().bfill()
-    
-    # Drop completely corrupted rows just in case and strictly enforce unique time!
-    bc_df = bc_df.dropna(subset=['Time_s'])
-    bc_df = bc_df.drop_duplicates(subset=['Time_s'], keep='first')
     
     bc_df.to_csv(output_bc_file, index=False)
     print(f"Saved boundary conditions to {output_bc_file}")
@@ -198,7 +190,7 @@ def plot_validation(output_dir):
         ylabel = "Velocity U (m/s)" if is_velocity else "Water Level (m)"
         
         search_str = "for medoc" if station.lower() == "fort medoc" else station.lower()
-        true_col = next((c for c in df_true_eval.columns if search_str in str(c).lower() and 'time' not in str(c).lower() and 'date' not in str(c).lower() and 'ssc' not in str(c).lower()), None)
+        true_col = next((c for c in df_true_eval.columns if search_str in str(c).lower() and 'ssc' not in str(c).lower()), None)
         
         if true_col:
             valid_mask = ~df_true_eval[true_col].isna()
