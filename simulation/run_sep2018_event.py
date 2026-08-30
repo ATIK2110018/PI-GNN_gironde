@@ -19,7 +19,8 @@ def prepare_data(excel_path, output_bc_file):
     # and have exactly 1-hour intervals, row by row. We must ignore the corrupt Excel time columns!
     master_start_date = pd.to_datetime('2018-08-01 00:00:00')
     
-    start_date = pd.to_datetime('2018-09-10 00:00:00')
+    sim_start_date = pd.to_datetime('2018-09-09 18:00:00') # 6 hours spin-up
+    eval_start_date = pd.to_datetime('2018-09-10 00:00:00')
     end_date = pd.to_datetime('2018-09-16 23:59:59') # 7 Days
     
     processed_dfs = []
@@ -41,8 +42,8 @@ def prepare_data(excel_path, output_bc_file):
     # Generate the absolute, mathematically perfect time index based on the user's guarantee
     unified_df['Unified_Time'] = pd.date_range(start=master_start_date, periods=len(unified_df), freq='h')
     
-    # Now slice the dataframe for the exact simulation window
-    mask = (unified_df['Unified_Time'] >= start_date) & (unified_df['Unified_Time'] <= end_date)
+    # Now slice the dataframe for the exact simulation window (including spin-up)
+    mask = (unified_df['Unified_Time'] >= sim_start_date) & (unified_df['Unified_Time'] <= end_date)
     unified_df = unified_df.loc[mask].copy().reset_index(drop=True)
     
     if unified_df.empty:
@@ -69,7 +70,7 @@ def prepare_data(excel_path, output_bc_file):
     
     # Create the BC dataframe as expected by simulate.py
     bc_df = pd.DataFrame()
-    bc_df['Time_s'] = (unified_df['Unified_Time'] - start_date).dt.total_seconds()
+    bc_df['Time_s'] = (unified_df['Unified_Time'] - sim_start_date).dt.total_seconds()
     bc_df['H_ocean'] = unified_df[port_col].values
     bc_df['Q_garonne'] = unified_df[gar_col].values
     bc_df['Q_dordogne'] = unified_df[dor_col].values
@@ -163,8 +164,21 @@ def plot_validation(output_dir):
     df_true_filtered = pd.read_csv(unified_csv)
     
     df_true_filtered['Unified_Time'] = pd.to_datetime(df_true_filtered['Unified_Time'])
-    start_date = pd.to_datetime('2018-09-10 00:00:00')
-    df_true_filtered['Time_s'] = (df_true_filtered['Unified_Time'] - start_date).dt.total_seconds()
+    sim_start_date = pd.to_datetime('2018-09-09 18:00:00')
+    eval_start_date = pd.to_datetime('2018-09-10 00:00:00')
+    
+    # Calculate Time_s relative to sim_start_date to match df_pred exactly
+    df_true_filtered['Time_s'] = (df_true_filtered['Unified_Time'] - sim_start_date).dt.total_seconds()
+    
+    # We must IGNORE the first 6 hours (spin-up) for plotting and metrics!
+    spinup_seconds = (eval_start_date - sim_start_date).total_seconds()
+    
+    df_pred_eval = df_pred[df_pred['Time_s'] >= spinup_seconds].copy()
+    df_true_eval = df_true_filtered[df_true_filtered['Time_s'] >= spinup_seconds].copy()
+    
+    # Normalize time axes so 0 is exactly at eval_start_date (Sep 10 00:00)
+    df_pred_eval['Time_Hours_Norm'] = (df_pred_eval['Time_s'] - spinup_seconds) / 3600.0
+    df_true_eval['Time_s_Norm'] = df_true_eval['Time_s'] - spinup_seconds
     
     stations = []
     for c in df_pred.columns:
@@ -184,12 +198,12 @@ def plot_validation(output_dir):
         ylabel = "Velocity U (m/s)" if is_velocity else "Water Level (m)"
         
         search_str = "for medoc" if station.lower() == "fort medoc" else station.lower()
-        true_col = next((c for c in df_true_filtered.columns if search_str in str(c).lower() and 'time' not in str(c).lower() and 'date' not in str(c).lower() and 'ssc' not in str(c).lower()), None)
+        true_col = next((c for c in df_true_eval.columns if search_str in str(c).lower() and 'time' not in str(c).lower() and 'date' not in str(c).lower() and 'ssc' not in str(c).lower()), None)
         
         if true_col:
-            valid_mask = ~df_true_filtered[true_col].isna()
-            true_times = df_true_filtered.loc[valid_mask, 'Time_s'].values
-            true_vals = df_true_filtered.loc[valid_mask, true_col].values
+            valid_mask = ~df_true_eval[true_col].isna()
+            true_times = df_true_eval.loc[valid_mask, 'Time_s_Norm'].values
+            true_vals = df_true_eval.loc[valid_mask, true_col].values
             
             if len(true_vals) > 5:
                 valid_stations.append(station)
@@ -230,12 +244,12 @@ def plot_validation(output_dir):
         data = station_data[station]
         ax = axes[i]
         
-        ax.plot(df_pred['Time_Hours'], df_pred[data['pred_col']], 'r-', label='PI-GNN Prediction', linewidth=2)
+        ax.plot(df_pred_eval['Time_Hours_Norm'], df_pred_eval[data['pred_col']], 'r-', label='PI-GNN Prediction', linewidth=2)
         
         true_times = data['true_times']
         true_vals = data['true_vals']
         
-        pred_interp = np.interp(true_times, df_pred['Time_s'].values, df_pred[data['pred_col']].values)
+        pred_interp = np.interp(true_times, df_pred_eval['Time_s_Norm'].values, df_pred_eval[data['pred_col']].values)
         
         var = np.sum((true_vals - np.mean(true_vals))**2)
         nse = 1 - np.sum((true_vals - pred_interp)**2) / (var + 1e-8)
@@ -268,12 +282,12 @@ def plot_validation(output_dir):
         
         fig_ind, ax_ind = plt.subplots(figsize=(10, 6))
         
-        ax_ind.plot(df_pred['Time_Hours'], df_pred[data['pred_col']], 'r-', label='PI-GNN Prediction', linewidth=2.5)
+        ax_ind.plot(df_pred_eval['Time_Hours_Norm'], df_pred_eval[data['pred_col']], 'r-', label='PI-GNN Prediction', linewidth=2.5)
         
         true_times = data['true_times']
         true_vals = data['true_vals']
         
-        pred_interp = np.interp(true_times, df_pred['Time_s'].values, df_pred[data['pred_col']].values)
+        pred_interp = np.interp(true_times, df_pred_eval['Time_s_Norm'].values, df_pred_eval[data['pred_col']].values)
         
         var = np.sum((true_vals - np.mean(true_vals))**2)
         nse = 1 - np.sum((true_vals - pred_interp)**2) / (var + 1e-8)
