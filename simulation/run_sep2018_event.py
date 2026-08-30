@@ -171,47 +171,74 @@ def plot_validation(output_dir):
         if c.endswith('_WSE'):
             stations.append(c[:-4])
     
-    fig, axes = plt.subplots(len(stations) // 2 + len(stations) % 2, 2, figsize=(20, 4 * (len(stations)//2)), dpi=150, sharex=True)
-    axes = axes.flatten()
+    # Filter stations to only those with valid true data
+    valid_stations = []
+    station_data = {}
     
-    for i, station in enumerate(stations):
+    for station in stations:
         is_velocity = station in ['P1', 'P4']
         pred_col = f"{station}_U" if is_velocity else f"{station}_WSE"
         ylabel = "Velocity U (m/s)" if is_velocity else "Water Level (m)"
         
-        # Try to find matching column in true data, excluding time, date, and ssc columns
         search_str = "for medoc" if station.lower() == "fort medoc" else station.lower()
         true_col = next((c for c in df_true_filtered.columns if search_str in str(c).lower() and 'time' not in str(c).lower() and 'date' not in str(c).lower() and 'ssc' not in str(c).lower()), None)
         
-        ax = axes[i]
-        ax.plot(df_pred['Time_Hours'], df_pred[pred_col], 'r-', label='PI-GNN Prediction', linewidth=2)
-        
         if true_col:
-            # Drop NaNs from true observations for accurate metrics
             valid_mask = ~df_true_filtered[true_col].isna()
             true_times = df_true_filtered.loc[valid_mask, 'Time_s'].values
             true_vals = df_true_filtered.loc[valid_mask, true_col].values
             
             if len(true_vals) > 5:
-                # Interpolate prediction to the exact timestamps of true observations
-                pred_interp = np.interp(true_times, df_pred['Time_s'].values, df_pred[pred_col].values)
+                valid_stations.append(station)
+                station_data[station] = {
+                    'pred_col': pred_col,
+                    'ylabel': ylabel,
+                    'true_times': true_times,
+                    'true_vals': true_vals
+                }
                 
-                # Compute metrics
-                var = np.sum((true_vals - np.mean(true_vals))**2)
-                nse = 1 - np.sum((true_vals - pred_interp)**2) / (var + 1e-8)
-                r2 = np.corrcoef(true_vals, pred_interp)[0, 1]**2 if var > 1e-6 else 0.0
-                
-                title = f'Station: {station} | R²: {r2:.3f} | NSE: {nse:.3f}'
-                ax.plot(true_times / 3600.0, true_vals, 'k--', label='True Obs (Excel)', alpha=0.7)
-            else:
-                title = f'Station: {station} (Not enough valid true data)'
-        else:
-            title = f'Station: {station} (No true data found)'
-            
+    if not valid_stations:
+        print("No stations with valid true data found. Skipping validation plot.")
+        return
+        
+    # Create subplots only for valid stations
+    num_stations = len(valid_stations)
+    cols = 2
+    rows = (num_stations + 1) // 2
+    fig, axes = plt.subplots(rows, cols, figsize=(20, 4 * rows), dpi=150, sharex=True)
+    
+    # Handle single row/col cases
+    if num_stations == 1:
+        axes = [axes]
+    elif rows > 1 or cols > 1:
+        axes = axes.flatten()
+        
+    for i, station in enumerate(valid_stations):
+        data = station_data[station]
+        ax = axes[i]
+        
+        ax.plot(df_pred['Time_Hours'], df_pred[data['pred_col']], 'r-', label='PI-GNN Prediction', linewidth=2)
+        
+        true_times = data['true_times']
+        true_vals = data['true_vals']
+        
+        pred_interp = np.interp(true_times, df_pred['Time_s'].values, df_pred[data['pred_col']].values)
+        
+        var = np.sum((true_vals - np.mean(true_vals))**2)
+        nse = 1 - np.sum((true_vals - pred_interp)**2) / (var + 1e-8)
+        r2 = np.corrcoef(true_vals, pred_interp)[0, 1]**2 if var > 1e-6 else 0.0
+        
+        title = f'Station: {station} | R²: {r2:.3f} | NSE: {nse:.3f}'
+        
+        ax.plot(true_times / 3600.0, true_vals, 'k--', label='True Obs (Excel)', alpha=0.7)
         ax.set_title(title)
-        ax.set_ylabel(ylabel)
+        ax.set_ylabel(data['ylabel'])
         ax.grid(True)
         ax.legend()
+        
+    # Hide any unused subplots
+    for j in range(i + 1, len(axes)):
+        fig.delaxes(axes[j])
         
     for ax in axes[-2:]:
         ax.set_xlabel('Time (Hours)')
