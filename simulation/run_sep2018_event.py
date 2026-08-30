@@ -18,34 +18,46 @@ def prepare_data(excel_path, output_bc_file):
     start_date = pd.to_datetime('2018-09-10 00:00:00')
     end_date = pd.to_datetime('2018-09-20 23:59:59')
     
-    # 1. Prefix columns and collect all sheets
-    processed_dfs = []
+    unified_df = None
+    
     for sheet_name, df in dfs.items():
-        rename_dict = {c: f"{sheet_name}_{c}" for c in df.columns}
-        processed_dfs.append(df.rename(columns=rename_dict).reset_index(drop=True))
+        # Find the time column for this specific sheet
+        date_col = next((c for c in df.columns if 'date' in str(c).lower() or 'time' in str(c).lower()), None)
+        if not date_col:
+            continue
+            
+        # Parse the datetime robustly
+        df['Unified_Time'] = pd.to_datetime(df[date_col], format='mixed', dayfirst=True, errors='coerce')
+        df = df.dropna(subset=['Unified_Time'])
         
-    # 2. Concatenate side-by-side. 
-    # This guarantees we NEVER drop data due to time mismatch across sheets!
-    # It relies purely on the exact serial order (row-by-row).
-    unified_df = pd.concat(processed_dfs, axis=1)
-    
-    # 3. Find a master time column
-    time_cols = [c for c in unified_df.columns if 'date' in str(c).lower() or 'time' in str(c).lower()]
-    if not time_cols:
-        print("Error: Could not find any time column in the excel file.")
-        sys.exit(1)
+        # CRITICAL FIX: Round time to nearest hour to force perfect alignment across sheets
+        # This fixes any slight timestamp discrepancies (e.g., 10:01 vs 10:00) that would otherwise misalign rows!
+        df['Unified_Time'] = df['Unified_Time'].dt.round('h')
         
-    master_time_col = time_cols[0]
-    
-    # Convert to datetime, turning bad formats into NaT
-    unified_df['Unified_Time'] = pd.to_datetime(unified_df[master_time_col], errors='coerce')
-    
-    # Forward/backward fill the time so if a row had a bad time string, it inherits the nearest valid time
-    unified_df['Unified_Time'] = unified_df['Unified_Time'].ffill().bfill()
-    
-    # 4. Filter the whole block at once
-    mask = (unified_df['Unified_Time'] >= start_date) & (unified_df['Unified_Time'] <= end_date)
-    unified_df = unified_df.loc[mask].copy()
+        # Filter for the event
+        mask = (df['Unified_Time'] >= start_date) & (df['Unified_Time'] <= end_date)
+        df_filtered = df.loc[mask].copy()
+        
+        if df_filtered.empty:
+            continue
+            
+        # Prefix columns with sheet name
+        rename_dict = {c: f"{sheet_name}_{c}" for c in df_filtered.columns if c != 'Unified_Time'}
+        df_filtered = df_filtered.rename(columns=rename_dict)
+        
+        # Drop the original unrounded time column to avoid clutter
+        original_time_col_renamed = f"{sheet_name}_{date_col}"
+        if original_time_col_renamed in df_filtered.columns:
+            df_filtered = df_filtered.drop(columns=[original_time_col_renamed])
+            
+        # Merge on the perfectly rounded time!
+        if unified_df is None:
+            unified_df = df_filtered
+        else:
+            unified_df = pd.merge(unified_df, df_filtered, on='Unified_Time', how='outer')
+            
+    # Sort the final merged dataframe by time
+    unified_df = unified_df.sort_values('Unified_Time').reset_index(drop=True)
     
     if unified_df.empty:
         print("Error: No data found for the date range 10-20 September 2018.")
@@ -143,7 +155,9 @@ def plot_validation(output_dir):
     
     for i, station in enumerate(stations):
         # Try to find matching column in true data, excluding time columns
-        true_col = next((c for c in df_true_filtered.columns if station.lower() in str(c).lower() and 'time' not in str(c).lower() and 'date' not in str(c).lower()), None)
+        # Handle typo 'For Medoc' -> 'Fort Medoc'
+        search_str = "for medoc" if station.lower() == "fort medoc" else station.lower()
+        true_col = next((c for c in df_true_filtered.columns if search_str in str(c).lower() and 'time' not in str(c).lower() and 'date' not in str(c).lower()), None)
         
         ax = axes[i]
         ax.plot(df_pred['Time_Hours'], df_pred[station], 'r-', label='PI-GNN Prediction', linewidth=2)
